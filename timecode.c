@@ -256,6 +256,7 @@ C74_HIDDEN void __sync__(t_timecode * const this, t_symbol const * const symbol,
 //                    CMTimebaseSetRateAndAnchorTime(this->timebase, 1, buff[2], midd);
                     CMTimebaseSetTime(this->timebase, buff[2]);
                     CMTimebaseSetAnchorTime(this->timebase, buff[2], midd);
+                    __fire__(this);
                 });
                 dispatch_source_set_cancel_handler(source, ^{
                     close(handle);
