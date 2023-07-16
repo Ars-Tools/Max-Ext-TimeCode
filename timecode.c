@@ -17,6 +17,7 @@ typedef struct {
     CMTime const * const epoch;
     CMTime const limit;
     CMTime check;
+    long trace;
 } t_timecode;
 
 C74_HIDDEN CMTimeValue gcd(CMTimeValue const x, CMTimeValue const y) {
@@ -56,14 +57,15 @@ C74_HIDDEN short const __parse__(CMTime * const target, short const argc, t_atom
                 target[cursor++] = __simplify__(__round__(60, atom_getfloat(argv+k)));
                 break;
             case A_SYM: {
+                char const * const str = atom_getsym(argv+k)->s_name;
                 double scale = 1;
                 double value = 0;
-                switch ( sscanf(atom_getsym(argv+k)->s_name, "%lf/%lf", &value, &scale) ) {
+                switch ( sscanf(str, "%lf/%lf", &value, &scale) ) {
                     case 2:
                         target[cursor++] = __simplify__(__round__(60 * scale, value));
                         break;
                     default:
-                        error("invalid form %s", atom_getsym(argv+k)->s_name);
+                        error("invalid form %s", str);
                         break;
                 }
                 break;
@@ -76,7 +78,7 @@ C74_HIDDEN short const __parse__(CMTime * const target, short const argc, t_atom
 }
 
 C74_HIDDEN void __fire__(t_timecode const * const this) {
-    *(CMTime*const)&this->check = CMTimeAdd(CMTimeMake(1, 1024), CMTimebaseGetTime(this->clock));
+    *(CMTime*const)&this->check = CMTimeAdd(CMTimeMultiplyByRatio(this->limit, 1, 2), CMTimebaseGetTime(this->clock));
     for ( register long k = 0, K = this->count ; k < K ; ++ k )
         CMTimebaseSetTimerDispatchSourceNextFireTime(this->clock, this->tasks[k], CMTimeMultiply(this->epoch[k], 1 + __idiv__(this->check, this->epoch[k])), 0);
     outlet_bang((t_outlet*const)this->pulse);
@@ -91,12 +93,12 @@ C74_HIDDEN t_timecode const * const __new__(t_symbol const * const symbol, short
         case 0:
             
             *(CMTime const**const)&this->epoch = (CMTime const*const)sysmem_newptrclear(argc * sizeof(CMTime));
+            *(long*const)&this->count = __parse__((CMTime*const)this->epoch, argc, argv);
+            *(CMTime const**const)&this->epoch = (CMTime const*const)sysmem_resizeptr((void*const)this->epoch, this->count * sizeof(CMTime));
             
             *(CMTime*const)&this->limit = CMTimeMake(1, 1024);
             
             *(t_outlet const**const)&this->pulse = bangout((void*const)this);
-            
-            *(long*const)&this->count = __parse__((CMTime*const)this->epoch, argc, argv);
             
             *(dispatch_source_t const**const)&this->tasks = (dispatch_source_t const*const)sysmem_newptr((this->count + 1) * sizeof(dispatch_source_t));
             
