@@ -8,24 +8,171 @@ C74_HIDDEN static t_class const * class = NULL;
 C74_HIDDEN static CMTimebaseRef prime = NULL;
 C74_HIDDEN static dispatch_queue_t queue = NULL;
 
+typedef struct {
+    __int128_t const p;
+    __int128_t const q;
+} rational256_t;
+
 C74_HIDDEN __uint128_t const gcd(__uint128_t const x, __uint128_t const y) {
-    return y == 0 ? x : gcd(y, x % y);
+    return y ? gcd(y, x % y) : x;
 }
 
-C74_HIDDEN CMTime const CMTimeSimplify(CMTime const target) {
-    CMTimeValue const vs = gcd(ABS(target.value), ABS(target.timescale));
-    return CMTimeMake(target.value / vs, target.timescale / vs);
+#define RationalMake(x, y) ((rational256_t const) { .p = x, .q = y })
+
+#define RationalIsNormal(x) (!!x.q)
+
+#define RationalToReal(x) ((long double)x.p / (long double)x.q)
+
+#define RationalIntegral(x) (x.p / x.q)
+
+#define RationalFraction(x) ((rational256_t const) { .p = x.p % x.q, .q = x.q })
+
+C74_HIDDEN rational256_t const RationalNormalize(rational256_t const number) {
+    if ( number.q )
+        return number.q < 0 ?
+            (rational256_t const) {
+                .p = -number.p,
+                .q = -number.q,
+            } :
+            (rational256_t const) {
+                .p =  number.p,
+                .q =  number.q,
+            };
+    else if ( 0 < number.p )
+        return (rational256_t const) {
+            .p = +1,
+            .q =  0,
+        };
+    else if ( 0 > number.p )
+        return (rational256_t const) {
+            .p = -1,
+            .q =  0,
+        };
+    else
+        return (rational256_t const) {
+            .p =  0,
+            .q =  0,
+        };
+            
 }
 
-C74_HIDDEN CMTime const CMTimeMod(CMTime const x, CMTime const y) {
-    __int128_t const a = x.value;
-    __int128_t const b = x.timescale;
-    __int128_t const c = y.value;
-    __int128_t const d = y.timescale;
-    __int128_t const p = ( a * d ) % ( b * c );
-    __int128_t const q = b * d;
-    __int128_t const w = gcd(ABS(p), ABS(q));
-    return CMTimeMake(p / w, q / w);
+C74_HIDDEN rational256_t const RationalSimplify(rational256_t const number) {
+    rational256_t const normal = RationalNormalize(number);
+    if ( normal.q ) {
+        assert(0 < normal.q);
+        __int128_t const divisor = gcd(ABS(normal.p), normal.q);
+        return (rational256_t const) {
+            .p = normal.p / divisor,
+            .q = normal.q / divisor
+        };
+    }
+    else return normal;
+}
+
+C74_HIDDEN rational256_t const RationalNeg(rational256_t const r) {
+    return (rational256_t const) {
+        .p = -r.p,
+        .q =  r.q
+    };
+}
+
+C74_HIDDEN rational256_t const RationalAdd(rational256_t const x, rational256_t const y) {
+    return (rational256_t const) {
+        .p = ( x.p * y.q ) + ( y.p * x.q ),
+        .q = x.q * y.q
+    };
+}
+
+C74_HIDDEN rational256_t const RationalSub(rational256_t const x, rational256_t const y) {
+    return (rational256_t const) {
+        .p = ( x.p * y.q ) - ( y.p * x.q ),
+        .q = x.q * y.q
+    };
+}
+
+C74_HIDDEN rational256_t const RationalMul(rational256_t const x, rational256_t const y) {
+    return (rational256_t const) {
+        .p = x.p * y.p,
+        .q = x.q * y.q
+    };
+}
+
+C74_HIDDEN rational256_t const RationalDiv(rational256_t const x, rational256_t const y) {
+    return (rational256_t const) {
+        .p = x.p * y.q,
+        .q = x.q * y.p
+    };
+}
+
+C74_HIDDEN rational256_t const RationalMod(rational256_t const x, rational256_t const y) {
+    return (rational256_t const) {
+        .p = ( x.p * y.q ) % ( y.p * x.q ),
+        .q = ( x.q * y.q )
+    };
+}
+
+C74_HIDDEN rational256_t const RationalMakeWithReal(long double const real) {
+    __int128_t const N = 1ull << ( LDBL_MANT_DIG / 2 );
+    long double rest, frac = modfl(real, &rest);
+    if ( !frac )
+        return (rational256_t const) {
+            .p = real,
+            .q = 1
+        };
+    else if ( frac < 0 ) {
+        --rest;
+        ++frac;
+    }
+    assert(0 < frac);
+    __int128_t a = 0, b = 1;
+    __int128_t c = 1, d = 0;
+    if ( frac )
+        while ( ( b < N ) && ( d < N ) ) {
+            long double const test = (long double)(a+c) / (long double)(b+d);
+            if ( fabsl( frac - test ) < LDBL_EPSILON ) {
+                break;
+            } else if ( frac > test ) {
+                a += c;
+                b += d;
+            } else if ( frac < test ) {
+                c += a;
+                d += b;
+            }
+        }
+    if ( N >= b + d )
+        return (rational256_t const) {
+            .p = ( a + c ) + rest * ( b + d ),
+            .q = ( b + d ),
+        };
+    else if ( b < d )
+        return (rational256_t const) {
+            .p = c + rest * d,
+            .q = d
+        };
+    else if ( b > d )
+        return (rational256_t const) {
+            .p = a + rest * b,
+            .q = b
+        };
+    else
+        return (rational256_t const) {0};
+}
+
+#define RationalMakeWithCMTime(x) ((rational256_t const){.p = x.value, .q = (CMTimeScale)x.timescale })
+
+C74_HIDDEN CMTime const CMTimeMakeWithRationalNumber(rational256_t const number) {
+    rational256_t const value = RationalSimplify(number);
+    assert(0 < value.q);
+    __int128_t const scale = MAX(1, value.q / ( 1ul << 31 ));
+    return CMTimeMake(value.p / scale, value.q / scale);
+}
+
+C74_HIDDEN CMTime const CMTimeSimplify(CMTime const time) {
+    CMTimeScale const divisor =
+        time.timescale < 0 ? -gcd(ABS(time.value), ABS(time.timescale)):
+        time.timescale > 0 ?  gcd(ABS(time.value), ABS(time.timescale)):
+        1;
+    return CMTimeMake(time.value / divisor, time.timescale / divisor);
 }
 
 C74_HIDDEN __int128_t const CMTimeDiv(CMTime const x, CMTime const y) {
@@ -36,51 +183,29 @@ C74_HIDDEN __int128_t const CMTimeDiv(CMTime const x, CMTime const y) {
     return ( a * d ) / ( b * c );
 }
 
-C74_HIDDEN CMTime const CMTimeFromReal(double value, double scale) {
-    char sign = 1;
-    double cache = 0;
-    if ( value == 0 )
-        return kCMTimeZero;
-    else if ( value < 0 ) {
-        sign *= -1;
-        value = -value;
-    }
-    if ( scale == 0 )
-        return CMTimeMake((!!value)*2-1, 0);
-    else if ( scale < 0 ) {
-        sign *= -1;
-        scale = -scale;
-    }
-    while ((FLT_MIN < modf(value, &cache) && log2(value) < 62 ) || (FLT_MIN < modf(scale, &cache) && log2(scale) < 30 )) {
-        value *= 2;
-        scale *= 2;
-    }
-    return CMTimeMake(sign * value, scale);
-}
-
-C74_HIDDEN bool const CMTimeFromBPM(t_atom const * const source, CMTime * const result) {
+C74_HIDDEN bool const CMTimeMakeWithAtomAsBPM(t_atom const * const source, CMTime * const result) {
     if ( result )
         switch ( atom_gettype(source) ) {
             case A_LONG:
-                *result = CMTimeAbsoluteValue(CMTimeSimplify(CMTimeFromReal(60, atom_getlong(source))));
+                *result = CMTimeMake(60, (CMTimeScale const)ABS(atom_getlong(source)));
                 return true;
             case A_FLOAT:
-                *result = CMTimeAbsoluteValue(CMTimeSimplify(CMTimeFromReal(60, atom_getfloat(source))));
+                *result = CMTimeMakeWithRationalNumber(RationalDiv(RationalMake(60, 1), RationalMakeWithReal(fabs(atom_getfloat(source)))));
                 return true;
             case A_SYM: {
                 char const * const string = atom_getsym(source)->s_name;
-                double value = 0;
-                double scale = 1;
-                switch (sscanf(string, "%lf/%lf", &value, &scale)) {
+                CMTimeScale value = 1;
+                CMTimeValue scale = 0;
+                switch (sscanf(string, "%d/%llud", &value, &scale)) {
                     case 2:
-                        *result = CMTimeAbsoluteValue(CMTimeSimplify(CMTimeFromReal(60 * scale, value)));
+                        *result = CMTimeSimplify(CMTimeMake(60 * ABS(scale), ABS(value)));
                         return true;
                     default:
                         *result = kCMTimeInvalid;
-                        break;
                         error("[%s] invalid format %s",
                               class->c_sym->s_name,
                               string);
+                        break;
                 }
                 break;
             default:
@@ -91,29 +216,29 @@ C74_HIDDEN bool const CMTimeFromBPM(t_atom const * const source, CMTime * const 
     return false;
 }
 
-C74_HIDDEN bool const CMTimeFromSEC(t_atom const * const source, CMTime * const result) {
+C74_HIDDEN bool const CMTimeMakeWithAtomAsSecond(t_atom const * const source, CMTime * const result) {
     if ( result )
         switch ( atom_gettype(source) ) {
             case A_LONG:
                 *result = CMTimeMake((CMTimeValue const)atom_getlong(source), 1);
                 return true;
             case A_FLOAT:
-                *result = CMTimeSimplify(CMTimeFromReal(atom_getfloat(source), 1));
+                *result = CMTimeMakeWithRationalNumber(RationalMakeWithReal(atom_getfloat(source)));
                 return true;
             case A_SYM: {
                 char const * const string = atom_getsym(source)->s_name;
-                double value = 0;
-                double scale = 1;
-                switch (sscanf(string, "%lf/%lf", &value, &scale)) {
+                CMTimeValue value = 0;
+                CMTimeScale scale = 1;
+                switch (sscanf(string, "%lld/%ud", &value, &scale)) {
                     case 2:
-                        *result = CMTimeSimplify(CMTimeFromReal(value, scale));
+                        *result = CMTimeSimplify(CMTimeMake(value, scale));
                         return true;
                     default:
                         *result = kCMTimeInvalid;
-                        break;
                         error("[%s] invalid format %s",
                               class->c_sym->s_name,
                               string);
+                        break;
                 }
                 break;
             default:
@@ -141,7 +266,7 @@ C74_HIDDEN short const __parse__(CMTime * const target, short const argc, t_atom
     CMTime cached = {0};
     short cursor = 0;
     for ( register short k = 0, K = argc ; k < K ; ++ k )
-        if ( CMTimeFromBPM(argv + k, &cached) )
+        if ( CMTimeMakeWithAtomAsBPM(argv + k, &cached) )
             target[cursor++] = cached;
     return cursor;
 }
@@ -415,18 +540,20 @@ C74_HIDDEN void __sync__(t_timecode const * const this, t_symbol const * const s
                                         switch (CMTimeCompare(this->limit, CMTimeAbsoluteValue(CMTimeSubtract(self.time, peer.time)))) {
                                             case -1:
                                                 CMTimebaseSetRateAndAnchorTime(this->clock,
-                                                                               CMTimeGetSeconds(CMTimeSubtract(peer.time, anchor.peer))
-                                                                               /
-                                                                               CMTimeGetSeconds(CMTimeSubtract(self.base, anchor.self)),
+                                                                               RationalToReal(RationalSimplify(RationalDiv(
+                                                                                                                           RationalSimplify(RationalSub(RationalMakeWithCMTime(peer.time), RationalMakeWithCMTime(anchor.peer))),
+                                                                                                                           RationalSimplify(RationalSub(RationalMakeWithCMTime(self.base), RationalMakeWithCMTime(anchor.self)))
+                                                                                                                           ))),
                                                                                peer.time,
                                                                                self.base);
                                                 __fire__(this);
                                                 if ( 0 < this->trace )
                                                     post("[%s] rate: %lf, time: %lld/%d, host: %lld/%d, from: %lld/%d",
                                                          class->c_sym->s_name,
-                                                         CMTimeGetSeconds(CMTimeSubtract(peer.time, anchor.peer))
-                                                         /
-                                                         CMTimeGetSeconds(CMTimeSubtract(self.base, anchor.self)),
+                                                         RationalToReal(RationalSimplify(RationalDiv(
+                                                                                                     RationalSimplify(RationalSub(RationalMakeWithCMTime(peer.time), RationalMakeWithCMTime(anchor.peer))),
+                                                                                                     RationalSimplify(RationalSub(RationalMakeWithCMTime(self.base), RationalMakeWithCMTime(anchor.self)))
+                                                                                                     ))),
                                                          peer.time.value, peer.time.timescale,
                                                          self.base.value, self.base.timescale,
                                                          self.time.value, self.time.timescale);
@@ -475,7 +602,7 @@ C74_HIDDEN void __rate__(t_timecode const * const this, t_atom_float const value
 
 C74_HIDDEN void __time__(t_timecode const * const this, t_symbol const * const symbol, short const argc, t_atom const * const argv) {
     CMTime value = kCMTimeInvalid;
-    if ( argc == 1 && CMTimeFromSEC(argv, &value) ) {
+    if ( argc == 1 && CMTimeMakeWithAtomAsSecond(argv, &value) ) {
         __remove__(this);
         CMTimebaseSetTime(this->clock, value);
         __fire__(this);
