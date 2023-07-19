@@ -17,17 +17,17 @@ C74_HIDDEN __uint128_t const gcd(__uint128_t const x, __uint128_t const y) {
     return y ? gcd(y, x % y) : x;
 }
 
-#define RationalMake(x, y) ((rational256_t const) { .p = x, .q = y })
+#define rational_make(x, y) ((rational256_t const) { .p = x, .q = y })
 
-#define RationalIsNormal(x) (!!x.q)
+#define rational_is_normal(x) (!!x.q)
 
-#define RationalToReal(x) ((long double)x.p / (long double)x.q)
+#define rational_to_real(x) ((long double)x.p / (long double)x.q)
 
-#define RationalIntegral(x) (x.p / x.q)
+#define rational_integral(x) (x.p / x.q)
 
-#define RationalFraction(x) ((rational256_t const) { .p = x.p % x.q, .q = x.q })
+#define rational_fraction(x) ((rational256_t const) { .p = x.p % x.q, .q = x.q })
 
-C74_HIDDEN rational256_t const RationalNormalize(rational256_t const number) {
+C74_HIDDEN rational256_t const rational_normalize(rational256_t const number) {
     if ( number.q )
         return number.q < 0 ?
             (rational256_t const) {
@@ -56,8 +56,8 @@ C74_HIDDEN rational256_t const RationalNormalize(rational256_t const number) {
             
 }
 
-C74_HIDDEN rational256_t const RationalSimplify(rational256_t const number) {
-    rational256_t const normal = RationalNormalize(number);
+C74_HIDDEN rational256_t const rational_simplify(rational256_t const number) {
+    rational256_t const normal = rational_normalize(number);
     if ( normal.q ) {
         assert(0 < normal.q);
         __int128_t const divisor = gcd(ABS(normal.p), normal.q);
@@ -69,49 +69,49 @@ C74_HIDDEN rational256_t const RationalSimplify(rational256_t const number) {
     else return normal;
 }
 
-C74_HIDDEN rational256_t const RationalNeg(rational256_t const r) {
+C74_HIDDEN rational256_t const rational_neg(rational256_t const r) {
     return (rational256_t const) {
         .p = -r.p,
         .q =  r.q
     };
 }
 
-C74_HIDDEN rational256_t const RationalAdd(rational256_t const x, rational256_t const y) {
+C74_HIDDEN rational256_t const rational_add(rational256_t const x, rational256_t const y) {
     return (rational256_t const) {
         .p = ( x.p * y.q ) + ( y.p * x.q ),
         .q = x.q * y.q
     };
 }
 
-C74_HIDDEN rational256_t const RationalSub(rational256_t const x, rational256_t const y) {
+C74_HIDDEN rational256_t const rational_sub(rational256_t const x, rational256_t const y) {
     return (rational256_t const) {
         .p = ( x.p * y.q ) - ( y.p * x.q ),
         .q = x.q * y.q
     };
 }
 
-C74_HIDDEN rational256_t const RationalMul(rational256_t const x, rational256_t const y) {
+C74_HIDDEN rational256_t const rational_mul(rational256_t const x, rational256_t const y) {
     return (rational256_t const) {
         .p = x.p * y.p,
         .q = x.q * y.q
     };
 }
 
-C74_HIDDEN rational256_t const RationalDiv(rational256_t const x, rational256_t const y) {
+C74_HIDDEN rational256_t const rational_div(rational256_t const x, rational256_t const y) {
     return (rational256_t const) {
         .p = x.p * y.q,
         .q = x.q * y.p
     };
 }
 
-C74_HIDDEN rational256_t const RationalMod(rational256_t const x, rational256_t const y) {
+C74_HIDDEN rational256_t const rational_mod(rational256_t const x, rational256_t const y) {
     return (rational256_t const) {
         .p = ( x.p * y.q ) % ( y.p * x.q ),
         .q = ( x.q * y.q )
     };
 }
 
-C74_HIDDEN rational256_t const RationalMakeWithReal(long double const real) {
+C74_HIDDEN rational256_t const rational_make_with_real(long double const real) {
     __int128_t const N = 1ULL << DBL_MANT_DIG;
     long double rest, frac = modfl(real, &rest);
     if ( !frac ) {
@@ -161,10 +161,10 @@ C74_HIDDEN rational256_t const RationalMakeWithReal(long double const real) {
         };
 }
 
-#define RationalMakeWithCMTime(x) ((rational256_t const){.p = x.value, .q = (CMTimeScale)x.timescale })
+#define rational_make_with_CMTime(x) ((rational256_t const){.p = x.value, .q = (CMTimeScale const)x.timescale })
 
 C74_HIDDEN CMTime const CMTimeMakeWithRationalNumber(rational256_t const number) {
-    rational256_t const value = RationalSimplify(number);
+    rational256_t const value = rational_simplify(number);
     assert(0 < value.q);
     __int128_t const scale = MAX(1, value.q / ( 1ul << 31 ));
     return CMTimeMake(value.p / scale, value.q / scale);
@@ -193,7 +193,7 @@ C74_HIDDEN bool const CMTimeMakeWithAtomAsBPM(t_atom const * const source, CMTim
                 *result = CMTimeMake(60, (CMTimeScale const)ABS(atom_getlong(source)));
                 return true;
             case A_FLOAT:
-                *result = CMTimeMakeWithRationalNumber(RationalDiv(RationalMake(60, 1), RationalMakeWithReal(fabs(atom_getfloat(source)))));
+                *result = CMTimeMakeWithRationalNumber(rational_div(rational_make(60, 1), rational_make_with_real(fabs(atom_getfloat(source)))));
                 return true;
             case A_SYM: {
                 char const * const string = atom_getsym(source)->s_name;
@@ -226,7 +226,7 @@ C74_HIDDEN bool const CMTimeMakeWithAtomAsSecond(t_atom const * const source, CM
                 *result = CMTimeMake((CMTimeValue const)atom_getlong(source), 1);
                 return true;
             case A_FLOAT:
-                *result = CMTimeMakeWithRationalNumber(RationalMakeWithReal(atom_getfloat(source)));
+                *result = CMTimeMakeWithRationalNumber(rational_make_with_real(atom_getfloat(source)));
                 return true;
             case A_SYM: {
                 char const * const string = atom_getsym(source)->s_name;
@@ -283,7 +283,7 @@ C74_HIDDEN void __fire__(t_timecode const * const this) {
 
 C74_HIDDEN t_timecode const * const __new__(t_symbol const * const symbol, short const argc, t_atom const * const argv) {
     
-    t_timecode const*const this = (t_timecode*const)object_alloc((t_class*const)class);
+    t_timecode const * const this = (t_timecode*const)object_alloc((t_class*const)class);
     
     if ( this ) switch (CMTimebaseCreateWithSourceTimebase(NULL, prime, (CMTimebaseRef*)&this->clock)) {
             
@@ -543,16 +543,16 @@ C74_HIDDEN void __sync__(t_timecode const * const this, t_symbol const * const s
                                         switch (CMTimeCompare(this->limit, CMTimeAbsoluteValue(CMTimeSubtract(self.time, peer.time)))) {
                                             case -1:
                                                 CMTimebaseSetRateAndAnchorTime(this->clock,
-                                                                               RationalToReal(RationalSimplify(RationalDiv(RationalSub(RationalMakeWithCMTime(peer.time), RationalMakeWithCMTime(anchor.peer)),
-                                                                                                                           RationalSub(RationalMakeWithCMTime(self.base), RationalMakeWithCMTime(anchor.self))))),
+                                                                               rational_to_real(rational_simplify(rational_div(rational_sub(rational_make_with_CMTime(peer.time), rational_make_with_CMTime(anchor.peer)),
+                                                                                                                               rational_sub(rational_make_with_CMTime(self.base), rational_make_with_CMTime(anchor.self))))),
                                                                                peer.time,
                                                                                self.base);
                                                 __fire__(this);
                                                 if ( 0 < this->trace )
                                                     post("[%s] rate: %lf, time: %lld/%d, host: %lld/%d, from: %lld/%d",
                                                          class->c_sym->s_name,
-                                                         RationalToReal(RationalSimplify(RationalDiv(RationalSub(RationalMakeWithCMTime(peer.time), RationalMakeWithCMTime(anchor.peer)),
-                                                                                                     RationalSub(RationalMakeWithCMTime(self.base), RationalMakeWithCMTime(anchor.self))))),
+                                                         rational_to_real(rational_simplify(rational_div(rational_sub(rational_make_with_CMTime(peer.time), rational_make_with_CMTime(anchor.peer)),
+                                                                                                         rational_sub(rational_make_with_CMTime(self.base), rational_make_with_CMTime(anchor.self))))),
                                                          peer.time.value, peer.time.timescale,
                                                          self.base.value, self.base.timescale,
                                                          self.time.value, self.time.timescale);
