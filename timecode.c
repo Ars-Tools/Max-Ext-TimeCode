@@ -254,14 +254,15 @@ C74_HIDDEN bool const CMTimeMakeWithAtomAsSecond(t_atom const * const source, CM
 
 typedef struct {
     t_object const super;
-    CMTimebaseRef const clock;
     t_atom_long const count;
-    dispatch_source_t const * const tasks;
-    t_outlet const * const pulse;
-    t_outlet const * const state;
-    CMTime const * const epoch;
-    CMTime const limit;
+    CMTimebaseRef * clock;
+    dispatch_source_t * tasks;
+    t_outlet * pulse;
+    t_outlet * state;
+    CMTime * epoch;
+    CMTime limit;
     CMTime check;
+    CMTime token;
     t_atom_long trace;
 } t_timecode;
 
@@ -274,73 +275,100 @@ C74_HIDDEN short const __parse__(CMTime * const target, short const argc, t_atom
     return cursor;
 }
 
-C74_HIDDEN void __fire__(t_timecode const * const this) {
-    *(CMTime*const)&this->check = CMTimeAdd(CMTimeMultiplyByRatio(this->limit, 1, 2), CMTimebaseGetTime(this->clock));
-    for ( register t_atom_long k = 0, K = this->count ; k < K ; ++ k )
-        CMTimebaseSetTimerDispatchSourceNextFireTime(this->clock, this->tasks[k], CMTimeMultiply(this->epoch[k], 1 + CMTimeDiv(this->check, this->epoch[k])), 0);
-    outlet_bang((t_outlet*const)this->pulse);
+C74_HIDDEN void __fire__(t_timecode const * const this, t_atom_long const type) {
+    if ( 0 <= type && type < this->count )
+        CMTimebaseSetTimerDispatchSourceNextFireTime(this->clock[type], this->tasks[type], CMTimeMultiply(this->epoch[type], 1 + CMTimeDiv(CMTimebaseGetTime(this->clock[type]), this->epoch[type])), 0);
 }
 
-C74_HIDDEN t_timecode const * const __new__(t_symbol const * const symbol, short const argc, t_atom const * const argv) {
-    
-    t_timecode const * const this = (t_timecode*const)object_alloc((t_class*const)class);
-    
-    if ( this ) switch (CMTimebaseCreateWithSourceTimebase(NULL, prime, (CMTimebaseRef*)&this->clock)) {
-            
-        case 0:
-            
-            *(CMTime const**const)&this->epoch = (CMTime const*const)sysmem_newptrclear(argc * sizeof(CMTime));
-            *(t_atom_long*const)&this->count = __parse__((CMTime*const)this->epoch, argc, argv);
-            *(CMTime const**const)&this->epoch = (CMTime const*const)sysmem_resizeptr((void*const)this->epoch, this->count * sizeof(CMTime));
-            
-            *(CMTime*const)&this->limit = CMTimeMake(1, 1024);
-            
-            *(t_outlet const**const)&this->pulse = bangout((void*const)this);
-            
-            *(dispatch_source_t const**const)&this->tasks = (dispatch_source_t const*const)sysmem_newptr((this->count + 1) * sizeof(dispatch_source_t));
-            
-            for ( register t_atom_long k = 0, K = this->count ; k < K ; ++ k ) {
-                
-                CMTime const epoch = this->epoch[K - k - 1];
-                
-                t_outlet const * const pulse = intout((void*const)this);
-                
-                dispatch_source_t const source = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, queue);
-                
-                dispatch_source_set_event_handler(source, ^{
-                    t_atom_long const count = CMTimeDiv(CMTimebaseGetTime(this->clock), epoch);
-                    outlet_int((t_outlet*const)pulse, count);
-                    CMTimebaseSetTimerDispatchSourceNextFireTime(this->clock, source, CMTimeMultiply(epoch, 1 + (int32_t const)count), 0);
-                });
-                
-                CMTimebaseAddTimerDispatchSource(this->clock, source);
-                
-                dispatch_resume(source);
-                
-                *(dispatch_source_t*const)(this->tasks + k) = source;
-                
-            }
-            
-            *(dispatch_source_t**const)(this->tasks + this->count) = NULL;
-            
-            *(t_outlet const**const)&this->state = listout((void*const)this);
-            
-            CMTimebaseSetRate(this->clock, 1);
-            
-            __fire__(this);
-            
+C74_HIDDEN void __fire__all__(t_timecode const * const this) {
+    for ( register t_atom_long k = 0, K = this->count ; k < K ; ++ k )
+        __fire__(this, k);
+    outlet_bang(this->pulse);
+}
+
+C74_HIDDEN void __beat__(t_timecode const * const this, t_symbol const * const symbol, short const argc, t_atom const * const argv) {
+    long const index = proxy_getinlet((t_object*const)this);
+    CMTime value = {0};
+    if ( index ) switch ( argc ) {
+        case 1:
+            if ( CMTimeMakeWithAtomAsBPM(argv, &value) )
+                this->epoch[index-1] = value;
             break;
-            
         default:
-            error("clock error");
             break;
     }
+}
+
+C74_HIDDEN t_timecode const * const __new__(t_symbol const * const symbol, short const argc, t_atom * const argv) {
     
+    t_timecode * const this = (t_timecode*const)object_alloc((t_class*const)class);
+    
+    if ( this ) {
+        this->limit = CMTimeMake(1, 1024);
+        this->check = CMTimeMake(1, 1);
+        attr_args_process(this, argc, argv);
+        this->epoch = (CMTime*const)sysmem_newptr(attr_args_offset(argc, argv) * sizeof(CMTime));
+        *(t_atom_long*const)&this->count = __parse__(this->epoch, attr_args_offset(argc, argv), argv);
+        this->clock = (CMTimebaseRef*const)sysmem_newptr( ( this->count + 1 ) * sizeof(CMTimebaseRef));
+        this->tasks = (dispatch_source_t*const)sysmem_newptr( ( this->count + 1 ) * sizeof(dispatch_source_t));
+        this->pulse = bangout(this);
+        if ( CMTimebaseCreateWithSourceTimebase(NULL, prime, this->clock + this->count) )
+            error("[%s] timebase error", class->c_sym->s_name);
+        else {
+            
+            CMTimebaseSetRate(this->clock[this->count], 1);
+            
+            if ( this->count ) {
+                
+                object_addmethod((t_object*const)this, (method const)__beat__, "beat", A_GIMME, 0);
+                
+                for ( register t_atom_long k = this->count - 1 ; 0 <= k ; --k ) {
+                    
+                    if ( CMTimebaseCreateWithSourceTimebase(NULL, this->clock[this->count], this->clock + k) )
+                        error("[%s] timebase error", class->c_sym->s_name);
+                    
+                    else {
+                        
+                        CMTimebaseRef const clock = (CMTimebaseRef const)CFRetain(this->clock[k]);
+                        dispatch_source_t const timer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, queue);
+                        
+                        CMTimebaseSetRateAndAnchorTime(clock, 1, kCMTimeZero, kCMTimeZero);
+                        
+                        proxy_new_forinlet((t_object*const)&this->super, k + 1, NULL, inlet_new(this, NULL));
+                        t_outlet * const count = intout(this);
+                        
+                        dispatch_source_set_registration_handler(timer, ^{
+                            CMTime const epoch = this->epoch[k];
+                            CMTimebaseAddTimerDispatchSource(clock, timer);
+                            CMTimebaseSetTimerDispatchSourceNextFireTime(clock, timer, CMTimeMultiply(epoch, 1 + CMTimeDiv(CMTimebaseGetTime(clock), epoch)), 0);
+                        });
+                        
+                        dispatch_source_set_event_handler(timer, ^{
+                            CMTime const epoch = this->epoch[k];
+                            t_atom_long const cycle = CMTimeDiv(CMTimebaseGetTime(clock), epoch);
+                            outlet_int(count, cycle);
+                            CMTimebaseSetTimerDispatchSourceNextFireTime(clock, timer, CMTimeMultiply(epoch, 1 + (CMTimeScale const)cycle), 0);
+                        });
+                        
+                        dispatch_source_set_cancel_handler(timer, ^{
+                            CMTimebaseRemoveTimerDispatchSource(clock, timer);
+                            CFRelease(clock);
+                        });
+                        
+                        dispatch_resume((this->tasks[k] = timer));
+                        
+                    }
+                }
+            }
+        }
+        this->tasks[this->count] = NULL;
+        this->state = listout(this);
+    }
     return this;
 }
 
 C74_HIDDEN void __bang__(t_timecode const * const this) {
-    CMTime const time = CMTimebaseGetTime(this->clock);
+    CMTime const time = CMTimebaseGetTime(this->clock[this->count]);
     t_atom vs[2] = {0};
     atom_setlong(vs + 0, (t_atom_long const)time.value);
     atom_setlong(vs + 1, (t_atom_long const)time.timescale);
@@ -386,8 +414,8 @@ C74_HIDDEN void __sync__(t_timecode const * const this, t_symbol const * const s
                 CMTime const buff[4] = {
                     kCMTimeInvalid,
                     kCMTimeInvalid,
-                    CMTimebaseGetTime(this->clock),
-                    this->check
+                    CMTimebaseGetTime(this->clock[this->count]),
+                    this->token,
                 };
                 struct sockaddr_in target = {0};
                 socklen_t length = sizeof(struct sockaddr_in);
@@ -415,12 +443,12 @@ C74_HIDDEN void __sync__(t_timecode const * const this, t_symbol const * const s
                                 }
                                 break;
                             default:
-                                error("send error");
+                                error("[%s] send error", class->c_sym->s_name);
                                 break;
                         }
                         break;
                     default:
-                        error("recv error");
+                        error("[%s] recv error", class->c_sym->s_name);
                         break;
                 }
             });
@@ -430,8 +458,7 @@ C74_HIDDEN void __sync__(t_timecode const * const this, t_symbol const * const s
                     post("[%s] server cancel",
                          class->c_sym->s_name);
             });
-            dispatch_resume(tasks);
-            *(dispatch_source_t*const)(this->tasks + this->count) = tasks;
+            dispatch_resume((*(dispatch_source_t*const)(this->tasks + this->count) = tasks));
             break;
         }
         case 2: {
@@ -459,7 +486,7 @@ C74_HIDDEN void __sync__(t_timecode const * const this, t_symbol const * const s
             dispatch_source_set_event_handler(timer, ^{
                 CMTime const buff[2] = {
                     CMTimebaseGetTime(prime),
-                    CMTimebaseGetTime(this->clock)
+                    CMTimebaseGetTime(this->clock[this->count])
                 };
                 switch (sendto((int const)dispatch_source_get_handle(tasks), buff, 2 * sizeof(CMTime), 0, (struct sockaddr*const)&target, sizeof(struct sockaddr_in))) {
                     case 2 * sizeof(CMTime):
@@ -485,10 +512,10 @@ C74_HIDDEN void __sync__(t_timecode const * const this, t_symbol const * const s
                         }
                         break;
                     default:
-                        error("send error");
+                        error("[%s] send error", class->c_sym->s_name);
                         break;
                 }
-                CMTimebaseSetTimerDispatchSourceNextFireTime(prime, timer, CMTimeMake((buff[0].value / buff[0].timescale + 1) * buff[0].timescale, buff[0].timescale), 0);
+                CMTimebaseSetTimerDispatchSourceNextFireTime(prime, timer, CMTimeMultiply(this->check, 1 + CMTimeDiv(buff[0], this->check)), 0);
             });
             dispatch_source_set_registration_handler(tasks, ^{
                 dispatch_resume(timer);
@@ -505,7 +532,7 @@ C74_HIDDEN void __sync__(t_timecode const * const this, t_symbol const * const s
                     /*2*/kCMTimeInvalid,// peer clock time
                     /*3*/kCMTimeInvalid,// peer signature
                     /*4*/CMTimebaseGetTime(prime),       // self prime clock at RECV
-                    /*5*/CMTimebaseGetTime(this->clock), // self this->clock at RECV
+                    /*5*/CMTimebaseGetTime(this->clock[this->count]), // self this->clock at RECV
                 };
                 switch (recv((int const)dispatch_source_get_handle(tasks), (void*const)buff, 4 * sizeof(CMTime), 0)) {
                     case 4 * sizeof(CMTime):
@@ -542,12 +569,12 @@ C74_HIDDEN void __sync__(t_timecode const * const this, t_symbol const * const s
                                     if ( rand() < exp ( CMTimeGetSeconds(travel) / CMTimeGetSeconds(length) - 1 ) * RAND_MAX )
                                         switch (CMTimeCompare(this->limit, CMTimeAbsoluteValue(CMTimeSubtract(self.time, peer.time)))) {
                                             case -1:
-                                                CMTimebaseSetRateAndAnchorTime(this->clock,
+                                                CMTimebaseSetRateAndAnchorTime(this->clock[this->count],
                                                                                rational_to_real(rational_simplify(rational_div(rational_sub(rational_make_with_CMTime(peer.time), rational_make_with_CMTime(anchor.peer)),
                                                                                                                                rational_sub(rational_make_with_CMTime(self.base), rational_make_with_CMTime(anchor.self))))),
                                                                                peer.time,
                                                                                self.base);
-                                                __fire__(this);
+                                                __fire__all__(this);
                                                 if ( 0 < this->trace )
                                                     post("[%s] rate: %lf, time: %lld/%d, host: %lld/%d, from: %lld/%d",
                                                          class->c_sym->s_name,
@@ -571,7 +598,7 @@ C74_HIDDEN void __sync__(t_timecode const * const this, t_symbol const * const s
                         }
                         break;
                     default:
-                        error("recv error");
+                        error("[%s] recv error", class->c_sym->s_name);
                         break;
                 }
             });
@@ -583,8 +610,7 @@ C74_HIDDEN void __sync__(t_timecode const * const this, t_symbol const * const s
                     post("[%s] client cancel",
                          class->c_sym->s_name);
             });
-            dispatch_resume(tasks);
-            *(dispatch_source_t*const)(this->tasks + this->count) = tasks;
+            dispatch_resume((*(dispatch_source_t*const)(this->tasks + this->count) = tasks));
             break;
         }
         default:
@@ -593,36 +619,45 @@ C74_HIDDEN void __sync__(t_timecode const * const this, t_symbol const * const s
     }
 }
 
-C74_HIDDEN void __rate__(t_timecode const * const this, t_atom_float const value) {
-    __remove__(this);
-    CMTimebaseSetRate(this->clock, value);
-    __fire__(this);
+C74_HIDDEN void __rate__(t_timecode const * const this, t_atom_float const rate) {
+    long const index = proxy_getinlet((t_object*const)this);
+    post("%ld\r\n", index);
+    CMTimebaseSetRate(this->clock[index ? index-1 : this->count], rate);
 }
 
 C74_HIDDEN void __time__(t_timecode const * const this, t_symbol const * const symbol, short const argc, t_atom const * const argv) {
+    long const index = proxy_getinlet((t_object*const)this);
     CMTime value[2] = {0};
     switch ( argc ) {
         case 1:
             if ( CMTimeMakeWithAtomAsSecond(argv+0, value+0) ) {
-                __remove__(this);
-                CMTimebaseSetTime(this->clock, value[0]);
-                __fire__(this);
+                if ( index ) {
+                    CMTimebaseSetTime(this->clock[index-1], value[0]);
+                    __fire__(this, index);
+                } else {
+                    __remove__(this);
+                    CMTimebaseSetTime(this->clock[this->count], value[0]);
+                    __fire__all__(this);
+                }
             } else
                 goto recover;
             break;
         case 2:
             if ( CMTimeMakeWithAtomAsSecond(argv+0, value+0) && CMTimeMakeWithAtomAsSecond(argv+1, value+1) ) {
-                __remove__(this);
-                CMTimebaseSetAnchorTime(this->clock, value[0], value[1]);
-                __fire__(this);
+                if ( index ) {
+                    CMTimebaseSetAnchorTime(this->clock[index-1], value[0], value[1]);
+                    __fire__(this, index);
+                } else {
+                    __remove__(this);
+                    CMTimebaseSetAnchorTime(this->clock[this->count], value[0], value[1]);
+                    __fire__all__(this);
+                }
             } else
                 goto recover;
             break;
         default:
         recover:
-            error("[%s] %s message can contain single integer, real or rational number",
-                  class->c_sym->s_name,
-                  symbol->s_name);
+            error("[%s] %s message can contain single integer, real or rational number", class->c_sym->s_name, symbol->s_name);
             break;
     }
 }
@@ -630,16 +665,17 @@ C74_HIDDEN void __time__(t_timecode const * const this, t_symbol const * const s
 C74_HIDDEN void __del__(t_timecode const * const this) {
     for ( register t_atom_long k = 0, K = this->count ; k < K ; ++ k ) {
         dispatch_source_cancel(this->tasks[k]);
-        CMTimebaseRemoveTimerDispatchSource(this->clock, this->tasks[k]);
         dispatch_release(this->tasks[k]);
     }
     if ( this->tasks[this->count] ) {
         dispatch_source_cancel(this->tasks[this->count]);
         dispatch_release(this->tasks[this->count]);
     }
-    sysmem_freeptr((void*const)this->tasks);
-    sysmem_freeptr((void*const)this->epoch);
-    CFRelease(this->clock);
+    for ( register t_atom_long k = 0, K = this->count ; k < K ; ++ k )
+        CFRelease(this->clock[k]);
+    CFRelease(this->clock[this->count]);
+    sysmem_freeptr(this->tasks);
+    sysmem_freeptr(this->clock);
 }
 
 C74_HIDDEN void __info__(t_timecode const * const this, t_atom_long const arg) {
@@ -666,6 +702,30 @@ sync [INTEGER] [SYMBOL]: import the clock from (SYMBOL):(INTEGER)");
         sprintf_tr(s, "output elapsed count every %lld/%d (≒%.3lf) second", this->epoch[a-1].value, this->epoch[a-1].timescale, CMTimeGetSeconds(this->epoch[a-1]));
 }
 
+C74_HIDDEN t_max_err const __interval__(t_timecode const * const this, void * const attr, long const argc, t_atom const * const argv) {
+    CMTime check = {0};
+    switch ( argc ) {
+        case 1:
+            if ( CMTimeMakeWithAtomAsSecond(argv, &check) )
+                *(CMTime*const)&this->check = check;
+            return MAX_ERR_NONE;
+        default:
+            return MAX_ERR_GENERIC;
+    }
+}
+
+C74_HIDDEN t_max_err const __threshold__(t_timecode const * const this, void * const attr, long const argc, t_atom const * const argv) {
+    CMTime limit = {0};
+    switch ( argc ) {
+        case 1:
+            if ( CMTimeMakeWithAtomAsSecond(argv, &limit) )
+                *(CMTime*const)&this->limit = limit;
+            return MAX_ERR_NONE;
+        default:
+            return MAX_ERR_GENERIC;
+    }
+}
+
 C74_EXPORT void ext_main(void * const _) {
     if ( !queue ) {
         queue = dispatch_queue_create("art.xsgn.timecode", DISPATCH_QUEUE_CONCURRENT);
@@ -673,11 +733,10 @@ C74_EXPORT void ext_main(void * const _) {
     if ( !prime ) {
         switch (CMTimebaseCreateWithSourceClock(NULL, CMClockGetHostTimeClock(), &prime)) {
             case noErr:
-                CMTimebaseSetRate(prime, 1);
+                CMTimebaseSetRateAndAnchorTime(prime, 1, kCMTimeZero, kCMTimeZero);
                 break;
             default:
-                error("[%s] clock error",
-                      class->c_sym->s_name);
+                error("[%s] clock error", class->c_sym->s_name);
                 break;
         }
     }
@@ -689,6 +748,10 @@ C74_EXPORT void ext_main(void * const _) {
         class_addmethod((t_class*const)class, (method const)__time__, "time", A_GIMME, 0);
         class_addmethod((t_class*const)class, (method const)__sync__, "sync", A_GIMME, 0);
         class_addmethod((t_class*const)class, (method const)__note__, "assist", A_CANT, 0);
+        
+        class_addattr((t_class*const)class, attribute_new("interval", gensym("float64"), 0, NULL, (method const)__interval__));
+        class_addattr((t_class*const)class, attribute_new("threshold", gensym("float64"), 0, NULL, (method const)__threshold__));
+        
         class_register(CLASS_BOX, (t_class*const)class);
     }
 }
