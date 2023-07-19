@@ -156,7 +156,7 @@ C74_HIDDEN rational256_t const RationalMakeWithReal(long double const real) {
         };
     else
         return (rational256_t const) {
-            .p = ( a + c ) / 2 + rest * ( b + d ) / 2,
+            .p = ( ( a + c ) + rest * ( b + d ) ) / 2,
             .q = ( b + d ) / 2
         };
 }
@@ -543,20 +543,16 @@ C74_HIDDEN void __sync__(t_timecode const * const this, t_symbol const * const s
                                         switch (CMTimeCompare(this->limit, CMTimeAbsoluteValue(CMTimeSubtract(self.time, peer.time)))) {
                                             case -1:
                                                 CMTimebaseSetRateAndAnchorTime(this->clock,
-                                                                               RationalToReal(RationalSimplify(RationalDiv(
-                                                                                                                           RationalSimplify(RationalSub(RationalMakeWithCMTime(peer.time), RationalMakeWithCMTime(anchor.peer))),
-                                                                                                                           RationalSimplify(RationalSub(RationalMakeWithCMTime(self.base), RationalMakeWithCMTime(anchor.self)))
-                                                                                                                           ))),
+                                                                               RationalToReal(RationalSimplify(RationalDiv(RationalSub(RationalMakeWithCMTime(peer.time), RationalMakeWithCMTime(anchor.peer)),
+                                                                                                                           RationalSub(RationalMakeWithCMTime(self.base), RationalMakeWithCMTime(anchor.self))))),
                                                                                peer.time,
                                                                                self.base);
                                                 __fire__(this);
                                                 if ( 0 < this->trace )
                                                     post("[%s] rate: %lf, time: %lld/%d, host: %lld/%d, from: %lld/%d",
                                                          class->c_sym->s_name,
-                                                         RationalToReal(RationalSimplify(RationalDiv(
-                                                                                                     RationalSimplify(RationalSub(RationalMakeWithCMTime(peer.time), RationalMakeWithCMTime(anchor.peer))),
-                                                                                                     RationalSimplify(RationalSub(RationalMakeWithCMTime(self.base), RationalMakeWithCMTime(anchor.self)))
-                                                                                                     ))),
+                                                         RationalToReal(RationalSimplify(RationalDiv(RationalSub(RationalMakeWithCMTime(peer.time), RationalMakeWithCMTime(anchor.peer)),
+                                                                                                     RationalSub(RationalMakeWithCMTime(self.base), RationalMakeWithCMTime(anchor.self))))),
                                                          peer.time.value, peer.time.timescale,
                                                          self.base.value, self.base.timescale,
                                                          self.time.value, self.time.timescale);
@@ -604,15 +600,31 @@ C74_HIDDEN void __rate__(t_timecode const * const this, t_atom_float const value
 }
 
 C74_HIDDEN void __time__(t_timecode const * const this, t_symbol const * const symbol, short const argc, t_atom const * const argv) {
-    CMTime value = kCMTimeInvalid;
-    if ( argc == 1 && CMTimeMakeWithAtomAsSecond(argv, &value) ) {
-        __remove__(this);
-        CMTimebaseSetTime(this->clock, value);
-        __fire__(this);
-    } else
-        error("[%s] %s message can contain single integer, real or rational number",
-              class->c_sym->s_name,
-              symbol->s_name);
+    CMTime value[2] = {0};
+    switch ( argc ) {
+        case 1:
+            if ( CMTimeMakeWithAtomAsSecond(argv+0, value+0) ) {
+                __remove__(this);
+                CMTimebaseSetTime(this->clock, value[0]);
+                __fire__(this);
+            } else
+                goto recover;
+            break;
+        case 2:
+            if ( CMTimeMakeWithAtomAsSecond(argv+0, value+0) && CMTimeMakeWithAtomAsSecond(argv+1, value+1) ) {
+                __remove__(this);
+                CMTimebaseSetAnchorTime(this->clock, value[0], value[1]);
+                __fire__(this);
+            } else
+                goto recover;
+            break;
+        default:
+        recover:
+            error("[%s] %s message can contain single integer, real or rational number",
+                  class->c_sym->s_name,
+                  symbol->s_name);
+            break;
+    }
 }
 
 C74_HIDDEN void __del__(t_timecode const * const this) {
