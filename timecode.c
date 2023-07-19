@@ -112,33 +112,33 @@ C74_HIDDEN rational256_t const RationalMod(rational256_t const x, rational256_t 
 }
 
 C74_HIDDEN rational256_t const RationalMakeWithReal(long double const real) {
-    __int128_t const N = 1ull << ( LDBL_MANT_DIG / 2 );
+    __int128_t const N = 1ULL << DBL_MANT_DIG;
     long double rest, frac = modfl(real, &rest);
-    if ( !frac )
+    if ( !frac ) {
         return (rational256_t const) {
-            .p = real,
+            .p = rest,
             .q = 1
         };
-    else if ( frac < 0 ) {
+    } else if ( frac < 0 ) {
         --rest;
         ++frac;
     }
     assert(0 < frac);
+    assert(frac < 1);
     __int128_t a = 0, b = 1;
     __int128_t c = 1, d = 0;
-    if ( frac )
-        while ( ( b < N ) && ( d < N ) ) {
-            long double const test = (long double)(a+c) / (long double)(b+d);
-            if ( fabsl( frac - test ) < LDBL_EPSILON ) {
-                break;
-            } else if ( frac > test ) {
-                a += c;
-                b += d;
-            } else if ( frac < test ) {
-                c += a;
-                d += b;
-            }
+    while ( ( b < N ) && ( d < N ) ) {
+        long double const e = fmal(frac, (b+d), -(a+c));
+        if ( fabsl( e ) < FLT_EPSILON ) {
+            break;
+        } else if ( e > 0 ) {
+            a += c;
+            b += d;
+        } else if ( e < 0 ) {
+            c += a;
+            d += b;
         }
+    }
     if ( N >= b + d )
         return (rational256_t const) {
             .p = ( a + c ) + rest * ( b + d ),
@@ -155,7 +155,10 @@ C74_HIDDEN rational256_t const RationalMakeWithReal(long double const real) {
             .q = b
         };
     else
-        return (rational256_t const) {0};
+        return (rational256_t const) {
+            .p = ( a + c ) / 2 + rest * ( b + d ) / 2,
+            .q = ( b + d ) / 2
+        };
 }
 
 #define RationalMakeWithCMTime(x) ((rational256_t const){.p = x.value, .q = (CMTimeScale)x.timescale })
