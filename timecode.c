@@ -66,7 +66,8 @@ C74_HIDDEN rational256_t const rational_simplify(rational256_t const number) {
             .q = normal.q / divisor
         };
     }
-    else return normal;
+    else
+        return normal;
 }
 
 C74_HIDDEN rational256_t const rational_neg(rational256_t const r) {
@@ -127,7 +128,7 @@ C74_HIDDEN rational256_t const rational_make_with_real(long double const real) {
     assert(frac < 1);
     __int128_t a = 0, b = 1;
     __int128_t c = 1, d = 0;
-    while ( ( b < N ) && ( d < N ) ) {
+    while ( ( b <= N ) && ( d <= N ) ) {
         long double const e = fmal(frac, (b+d), -(a+c));
         if ( fabsl( e ) < FLT_EPSILON ) {
             break;
@@ -255,11 +256,11 @@ C74_HIDDEN bool const CMTimeMakeWithAtomAsSecond(t_atom const * const source, CM
 typedef struct {
     t_object const super;
     t_atom_long const count;
-    CMTimebaseRef * clock;
-    dispatch_source_t * tasks;
-    t_outlet * pulse;
-    t_outlet * state;
-    CMTime * epoch;
+    CMTimebaseRef const * const clock;
+    dispatch_source_t const * const tasks;
+    t_outlet * const pulse;
+    t_outlet * const state;
+    CMTime * const epoch;
     CMTime limit;
     CMTime check;
     CMTime token;
@@ -304,19 +305,33 @@ C74_HIDDEN t_timecode const * const __new__(t_symbol const * const symbol, short
     t_timecode * const this = (t_timecode*const)object_alloc((t_class*const)class);
     
     if ( this ) {
-        this->limit = CMTimeMake(1, 1024);
-        this->check = CMTimeMake(1, 1);
-        attr_args_process(this, argc, argv);
-        this->epoch = (CMTime*const)sysmem_newptr(attr_args_offset(argc, argv) * sizeof(CMTime));
+        
+        *(CMTime const**const)&this->epoch = (CMTime*const)sysmem_newptr(argc * sizeof(CMTime));
+        
         *(t_atom_long*const)&this->count = __parse__(this->epoch, attr_args_offset(argc, argv), argv);
-        this->clock = (CMTimebaseRef*const)sysmem_newptr( ( this->count + 1 ) * sizeof(CMTimebaseRef));
-        this->tasks = (dispatch_source_t*const)sysmem_newptr( ( this->count + 1 ) * sizeof(dispatch_source_t));
-        this->pulse = bangout(this);
-        if ( CMTimebaseCreateWithSourceTimebase(NULL, prime, this->clock + this->count) )
+        
+        *(CMTime const**const)&this->epoch = (CMTime*const)sysmem_resizeptr(this->epoch, this->count * sizeof(CMTime));
+        
+        *(CMTimebaseRef const**const)&this->clock = (CMTimebaseRef const*const)sysmem_newptr( ( this->count + 1 ) * sizeof(CMTimebaseRef));
+        
+        *(dispatch_source_t const**const)&this->tasks = (dispatch_source_t*const)sysmem_newptr( ( this->count + 1 ) * sizeof(dispatch_source_t));
+        
+        *(t_outlet const**const)&this->pulse = bangout(this);
+        
+        if ( CMTimebaseCreateWithSourceTimebase(NULL, prime, (CMTimebaseRef*const)this->clock + this->count) )
             error("[%s] timebase error", class->c_sym->s_name);
+        
         else {
             
-            CMTimebaseSetRate(this->clock[this->count], 1);
+            this->limit = CMTimeMake(1, 1024);
+            this->check = CMTimeMake(1, 1);
+            
+            attr_args_process(this, argc, argv);
+            
+            switch (CMTimebaseSetRate(this->clock[this->count], 1)) {
+                case noErr:
+                    break;
+            }
             
             if ( this->count ) {
                 
@@ -324,7 +339,7 @@ C74_HIDDEN t_timecode const * const __new__(t_symbol const * const symbol, short
                 
                 for ( register t_atom_long k = this->count - 1 ; 0 <= k ; --k ) {
                     
-                    if ( CMTimebaseCreateWithSourceTimebase(NULL, this->clock[this->count], this->clock + k) )
+                    if ( CMTimebaseCreateWithSourceTimebase(NULL, this->clock[this->count], (CMTimebaseRef*const)this->clock + k) )
                         error("[%s] timebase error", class->c_sym->s_name);
                     
                     else {
@@ -355,14 +370,17 @@ C74_HIDDEN t_timecode const * const __new__(t_symbol const * const symbol, short
                             CFRelease(clock);
                         });
                         
-                        dispatch_resume((this->tasks[k] = timer));
+                        dispatch_resume((*(dispatch_source_t*const)(this->tasks + k) = timer));
                         
                     }
                 }
             }
         }
-        this->tasks[this->count] = NULL;
-        this->state = listout(this);
+        
+        *(dispatch_source_t*const)(this->tasks + this->count) = NULL;
+        
+        *(t_outlet**const)&this->state = listout(this);
+        
     }
     return this;
 }
@@ -405,7 +423,7 @@ C74_HIDDEN void __sync__(t_timecode const * const this, t_symbol const * const s
                             post("[%s] bound", class->c_sym->s_name);
                         break;
                     default:
-                        error("bind error");
+                        error("[%s] bind error", class->c_sym->s_name);
                         break;
                 }
             });
@@ -621,8 +639,10 @@ C74_HIDDEN void __sync__(t_timecode const * const this, t_symbol const * const s
 
 C74_HIDDEN void __rate__(t_timecode const * const this, t_atom_float const rate) {
     long const index = proxy_getinlet((t_object*const)this);
-    post("%ld\r\n", index);
-    CMTimebaseSetRate(this->clock[index ? index-1 : this->count], rate);
+    switch (CMTimebaseSetRate(this->clock[index ? index-1 : this->count], rate)) {
+        case noErr:
+            break;
+    }
 }
 
 C74_HIDDEN void __time__(t_timecode const * const this, t_symbol const * const symbol, short const argc, t_atom const * const argv) {
@@ -663,19 +683,16 @@ C74_HIDDEN void __time__(t_timecode const * const this, t_symbol const * const s
 }
 
 C74_HIDDEN void __del__(t_timecode const * const this) {
-    for ( register t_atom_long k = 0, K = this->count ; k < K ; ++ k ) {
-        dispatch_source_cancel(this->tasks[k]);
-        dispatch_release(this->tasks[k]);
-    }
-    if ( this->tasks[this->count] ) {
-        dispatch_source_cancel(this->tasks[this->count]);
-        dispatch_release(this->tasks[this->count]);
-    }
-    for ( register t_atom_long k = 0, K = this->count ; k < K ; ++ k )
+    for ( register t_atom_long k = 0, K = this->count + 1 ; k < K ; ++ k ) {
+        if ( this->tasks[k] ) {
+            dispatch_source_cancel(this->tasks[k]);
+            dispatch_release(this->tasks[k]);
+        }
         CFRelease(this->clock[k]);
-    CFRelease(this->clock[this->count]);
-    sysmem_freeptr(this->tasks);
-    sysmem_freeptr(this->clock);
+    }
+    sysmem_freeptr((void*const)this->tasks);
+    sysmem_freeptr((void*const)this->clock);
+    sysmem_freeptr((void*const)this->epoch);
 }
 
 C74_HIDDEN void __info__(t_timecode const * const this, t_atom_long const arg) {
@@ -726,6 +743,155 @@ C74_HIDDEN t_max_err const __threshold__(t_timecode const * const this, void * c
     }
 }
 
+C74_HIDDEN t_max_err const __source__(t_timecode const * const this, t_attr const * const attr, long const argc, char const * const argv) {
+    AudioObjectPropertyAddress const address = {
+        .mSelector = kAudioHardwarePropertyDevices,
+        .mScope = kAudioObjectPropertyScopeGlobal,
+        .mElement = kAudioObjectPropertyElementMain,
+    };
+    uint32_t size = 0;
+    switch ( AudioObjectGetPropertyDataSize(kAudioObjectSystemObject, &address, 0, NULL, &size) ) {
+        case 0:
+            break;
+        default:
+            return MAX_ERR_GENERIC;
+    }
+    AudioDeviceID * const devices = (AudioDeviceID*const)alloca(size);
+    switch ( AudioObjectGetPropertyData(kAudioObjectSystemObject, &address, 0, NULL, &size, devices)) {
+        case 0:
+            break;
+        default:
+            return MAX_ERR_GENERIC;
+    }
+    switch ( argc ) {
+        case 1:
+            switch ( atom_gettype((t_atom*const)argv) ) {
+                case A_SYM: {
+                    t_symbol const * const symbol = atom_getsym((t_atom*const)argv);
+                    for ( register long k = 0, K = size / sizeof(AudioDeviceID) ; k < K ; ++ k ) {
+                        {
+                            AudioObjectPropertyAddress const address = {
+                                .mSelector = kAudioDevicePropertyStreamConfiguration,
+                                .mScope = kAudioObjectPropertyScopeOutput,
+                                .mElement = kAudioObjectPropertyElementMain
+                            };
+                            uint32_t size = 0;
+                            switch (AudioObjectGetPropertyDataSize(devices[k], &address, 0, NULL, &size)) {
+                                case 0:
+                                    break;
+                                default:
+                                    continue;
+                            }
+                            AudioBufferList * const list = (AudioBufferList*const)alloca(size);
+                            switch (AudioObjectGetPropertyData(devices[k], &address, 0, NULL, &size, list)) {
+                                case 0:
+                                    break;
+                                default:
+                                    continue;
+                            }
+                            uint32_t count = 0;
+                            for ( register long k = 0, K = list->mNumberBuffers ; k < K ; ++ k )
+                                count += list->mBuffers[k].mNumberChannels;
+                            if ( !count )
+                                continue;;
+                        }
+                        {
+                            AudioObjectPropertyAddress const address = {
+                                .mSelector = kAudioDevicePropertyDeviceName,
+                                .mScope = kAudioObjectPropertyScopeGlobal,
+                                .mElement = kAudioObjectPropertyElementMain
+                            };
+                            uint32_t size = 0;
+                            switch (AudioObjectGetPropertyDataSize(devices[k], &address, 0, NULL, &size)) {
+                                case 0:
+                                    break;
+                                default:
+                                    continue;
+                            }
+                            char * const name = (char*const)alloca(size);
+                            switch (AudioObjectGetPropertyData(devices[k], &address, 0, NULL, &size, name)) {
+                                case 0:
+                                    break;
+                                default:
+                                    continue;
+                            }
+                            CMClockRef clock = NULL;
+                            if ( !strcmp(name, symbol->s_name) )
+                                switch (CMAudioDeviceClockCreateFromAudioDeviceID(NULL, devices[k], &clock)) {
+                                    case noErr:
+                                        switch (CMTimebaseSetSourceClock(this->clock[this->count], clock)) {
+                                            case noErr:
+                                                return MAX_ERR_NONE;
+                                            default:
+                                                error("[%s] source clock wasn't updated", class->c_sym->s_name);
+                                                CFRelease(clock);
+                                                continue;;
+                                        }
+                                    default:
+                                        error("[%s] no clock created", class->c_sym->s_name);
+                                        continue;
+                                }
+                        }
+                    }
+                }
+            }
+        default:
+            error("[%s] choose one", class->c_sym->s_name);
+            for ( register long k = 0, K = size / sizeof(AudioDeviceID) ; k < K ; ++ k ) {
+                {
+                    AudioObjectPropertyAddress const address = {
+                        .mSelector = kAudioDevicePropertyStreamConfiguration,
+                        .mScope = kAudioObjectPropertyScopeOutput,
+                        .mElement = kAudioObjectPropertyElementMain
+                    };
+                    uint32_t size = 0;
+                    switch (AudioObjectGetPropertyDataSize(devices[k], &address, 0, NULL, &size)) {
+                        case 0:
+                            break;
+                        default:
+                            continue;
+                    }
+                    AudioBufferList * const list = (AudioBufferList*const)alloca(size);
+                    switch (AudioObjectGetPropertyData(devices[k], &address, 0, NULL, &size, list)) {
+                        case 0:
+                            break;
+                        default:
+                            continue;
+                    }
+                    uint32_t count = 0;
+                    for ( register long k = 0, K = list->mNumberBuffers ; k < K ; ++ k )
+                        count += list->mBuffers[k].mNumberChannels;
+                    if ( !count )
+                        continue;;
+                }
+                {
+                    AudioObjectPropertyAddress const address = {
+                        .mSelector = kAudioDevicePropertyDeviceName,
+                        .mScope = kAudioObjectPropertyScopeGlobal,
+                        .mElement = kAudioObjectPropertyElementMain
+                    };
+                    uint32_t size = 0;
+                    switch (AudioObjectGetPropertyDataSize(devices[k], &address, 0, NULL, &size)) {
+                        case 0:
+                            break;
+                        default:
+                            continue;
+                    }
+                    char * const name = (char*const)alloca(size);
+                    switch (AudioObjectGetPropertyData(devices[k], &address, 0, NULL, &size, name)) {
+                        case 0:
+                            break;
+                        default:
+                            continue;
+                    }
+                    error(" - %s", name);
+                }
+            }
+            break;
+    }
+    return MAX_ERR_GENERIC;
+}
+
 C74_EXPORT void ext_main(void * const _) {
     if ( !queue ) {
         queue = dispatch_queue_create("art.xsgn.timecode", DISPATCH_QUEUE_CONCURRENT);
@@ -741,7 +907,9 @@ C74_EXPORT void ext_main(void * const _) {
         }
     }
     if ( !class ) {
+        
         class = class_new("timecode", (method const)__new__, (method const)__del__, sizeof(t_timecode), NULL, A_GIMME, 0);
+        
         class_addmethod((t_class*const)class, (method const)__bang__, "bang", 0);
         class_addmethod((t_class*const)class, (method const)__info__, "info", A_DEFLONG, 0);
         class_addmethod((t_class*const)class, (method const)__rate__, "rate", A_FLOAT, 0);
@@ -749,6 +917,7 @@ C74_EXPORT void ext_main(void * const _) {
         class_addmethod((t_class*const)class, (method const)__sync__, "sync", A_GIMME, 0);
         class_addmethod((t_class*const)class, (method const)__note__, "assist", A_CANT, 0);
         
+        class_addattr((t_class*const)class, attribute_new("source", gensym("symbol"), 0, NULL, (method const)__source__));
         class_addattr((t_class*const)class, attribute_new("interval", gensym("float64"), 0, NULL, (method const)__interval__));
         class_addattr((t_class*const)class, attribute_new("threshold", gensym("float64"), 0, NULL, (method const)__threshold__));
         
