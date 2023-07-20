@@ -288,7 +288,10 @@ C74_HIDDEN short const __parse__(CMTime * const target, short const argc, t_atom
 
 C74_HIDDEN void __fire__(t_timecode const * const this, t_atom_long const type) {
     if ( 0 <= type && type < this->count )
-        CMTimebaseSetTimerDispatchSourceNextFireTime(this->clock[type], this->tasks[type], CMTimeMultiply(this->epoch[type], 1 + CMTimeDiv(CMTimebaseGetTime(this->clock[type]), this->epoch[type])), 0);
+        switch (CMTimebaseSetTimerDispatchSourceNextFireTime(this->clock[type], this->tasks[type], CMTimeMultiply(this->epoch[type], 1 + CMTimeDiv(CMTimebaseGetTime(this->clock[type]), this->epoch[type])), 0)) {
+            case noErr:
+                break;
+        }
 }
 
 C74_HIDDEN void __fire__all__(t_timecode const * const this) {
@@ -300,13 +303,19 @@ C74_HIDDEN void __fire__all__(t_timecode const * const this) {
 C74_HIDDEN void __beat__(t_timecode const * const this, t_symbol const * const symbol, short const argc, t_atom const * const argv) {
     long const index = proxy_getinlet((t_object*const)this);
     CMTime value = {0};
-    if ( index ) switch ( argc ) {
-        case 1:
-            if ( CMTimeMakeWithAtomAsBPM(argv, &value) )
-                this->epoch[index-1] = value;
+    switch ( index ) {
+        case 0:
+            error("[%s] primary inlet cannot accept beat message", class->c_sym->s_name);
             break;
         default:
-            break;
+            switch ( argc ) {
+                case 1:
+                    if (CMTimeMakeWithAtomAsBPM(argv, &value))
+                        this->epoch[index-1] = value;
+                    break;
+                default:
+                    break;
+            }
     }
 }
 
@@ -357,7 +366,10 @@ C74_HIDDEN t_timecode const * const __new__(t_symbol const * const symbol, short
                         CMTimebaseRef const clock = (CMTimebaseRef const)CFRetain(this->clock[k]);
                         dispatch_source_t const timer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, queue);
                         
-                        CMTimebaseSetRateAndAnchorTime(clock, 1, kCMTimeZero, kCMTimeZero);
+                        switch (CMTimebaseSetRateAndAnchorTime(clock, 1, kCMTimeZero, kCMTimeZero)) {
+                            case noErr:
+                                break;
+                        }
                         
                         proxy_new_forinlet((t_object*const)this, k + 1, NULL, inlet_new(this, NULL));
                         t_outlet * const count = intout(this);
@@ -397,11 +409,16 @@ C74_HIDDEN t_timecode const * const __new__(t_symbol const * const symbol, short
 }
 
 C74_HIDDEN void __bang__(t_timecode const * const this) {
-    CMTime const time = CMTimebaseGetTime(this->clock[this->count]);
-    t_atom vs[2] = {0};
-    atom_setlong(vs + 0, (t_atom_long const)time.value);
-    atom_setlong(vs + 1, (t_atom_long const)time.timescale);
-    outlet_list((t_outlet*const)this->state, gensym("list"), 2, vs);
+    long const index = proxy_getinlet((t_object*const)this);
+    if ( index )
+        __fire__(this, index - 1);
+    else {
+        CMTime const time = CMTimebaseGetTime(this->clock[this->count]);
+        t_atom vs[2] = {0};
+        atom_setlong(vs + 0, (t_atom_long const)time.value);
+        atom_setlong(vs + 1, (t_atom_long const)time.timescale);
+        outlet_list((t_outlet*const)this->state, gensym("list"), 2, vs);
+    }
 }
 
 C74_HIDDEN void __remove__(t_timecode const * const this) {
@@ -523,7 +540,10 @@ C74_HIDDEN void __import__(t_timecode const * const this, struct sockaddr_in con
                 error("[%s] send error", class->c_sym->s_name);
                 break;
         }
-        CMTimebaseSetTimerDispatchSourceNextFireTime(prime, timer, CMTimeMultiply(this->check, 1 + CMTimeDiv(buff[0], this->check)), 0);
+        switch (CMTimebaseSetTimerDispatchSourceNextFireTime(prime, timer, CMTimeMultiply(this->check, 1 + CMTimeDiv(buff[0], this->check)), 0)) {
+            case noErr:
+                break;
+        }
     });
     dispatch_source_set_registration_handler(tasks, ^{
         dispatch_resume(timer);
@@ -622,40 +642,35 @@ C74_HIDDEN void __import__(t_timecode const * const this, struct sockaddr_in con
 }
 
 C74_HIDDEN void __sync__(t_timecode const * const this, t_symbol const * const symbol, short const argc, t_atom const * const argv) {
-    switch ( proxy_getinlet((t_object*const)this)) {
-        case 0:
-            switch ( argc ) {
-                case 1:
-                    __remove__(this);
-                    __export__(this, (struct sockaddr_in const) {
-                        .sin_family = AF_INET,
-                        .sin_addr = {
-                            .s_addr = INADDR_ANY,
-                        },
-                        .sin_port = htons(atom_getlong(argv)),
-                        .sin_len = sizeof(struct sockaddr_in),
-                        .sin_zero = {0}
-                    });
-                    break;
-                case 2:
-                    __remove__(this);
-                    __import__(this, (struct sockaddr_in const) {
-                        .sin_family = AF_INET,
-                        .sin_addr = {
-                            .s_addr = __addr__(atom_getsym(argv + 1)->s_name),
-                        },
-                            .sin_port = htons(atom_getlong(argv + 0)),
-                            .sin_len = sizeof(struct sockaddr_in),
-                            .sin_zero = {0}
-                    });
-                    break;
-                default:
-                    error("[%s] not allowed", class->c_sym->s_name);
-                    break;
-            }
+    if ( proxy_getinlet((t_object*const)this))
+        error("[%s] only primary inlet can accept sync message", class->c_sym->s_name);
+    else switch ( argc ) {
+        case 1:
+            __remove__(this);
+            __export__(this, (struct sockaddr_in const) {
+                .sin_family = AF_INET,
+                .sin_addr = {
+                    .s_addr = INADDR_ANY
+                },
+                .sin_port = htons(atom_getlong(argv)),
+                .sin_len = sizeof(struct sockaddr_in),
+                .sin_zero = {0}
+            });
+            break;
+        case 2:
+            __remove__(this);
+            __import__(this, (struct sockaddr_in const) {
+                .sin_family = AF_INET,
+                .sin_addr = {
+                    .s_addr = __addr__(atom_getsym(argv + 1)->s_name)
+                },
+                .sin_port = htons(atom_getlong(argv + 0)),
+                .sin_len = sizeof(struct sockaddr_in),
+                .sin_zero = {0}
+            });
             break;
         default:
-            error("[%s] only 1st inlet can accept sync message", class->c_sym->s_name);
+            error("[%s] not allowed", class->c_sym->s_name);
             break;
     }
 }
@@ -673,30 +688,40 @@ C74_HIDDEN void __time__(t_timecode const * const this, t_symbol const * const s
     CMTime value[2] = {0};
     switch ( argc ) {
         case 1:
-            if ( CMTimeMakeWithAtomAsSecond(argv+0, value+0) ) {
-                if ( index ) {
-                    CMTimebaseSetTime(this->clock[index-1], value[0]);
-                    __fire__(this, index-1);
-                } else {
-                    __remove__(this);
-                    CMTimebaseSetTime(this->clock[this->count], value[0]);
-                    __fire__all__(this);
+            if ( CMTimeMakeWithAtomAsSecond(argv+0, value+0) ) switch ( index ) {
+                case 0: switch (CMTimebaseSetTime(this->clock[this->count], value[0])) {
+                    case noErr:
+                        __remove__(this);
+                        __fire__all__(this);
+                        break;
                 }
-            } else
-                goto recover;
+                    break;
+                default: switch (CMTimebaseSetTime(this->clock[index-1], value[0])) {
+                    case noErr:
+                        __fire__(this, index-1);
+                        break;
+                }
+                    break;
+            }
+            else goto recover;
             break;
         case 2:
-            if ( CMTimeMakeWithAtomAsSecond(argv+0, value+0) && CMTimeMakeWithAtomAsSecond(argv+1, value+1) ) {
-                if ( index ) {
-                    CMTimebaseSetAnchorTime(this->clock[index-1], value[0], value[1]);
-                    __fire__(this, index-1);
-                } else {
-                    __remove__(this);
-                    CMTimebaseSetAnchorTime(this->clock[this->count], value[0], value[1]);
-                    __fire__all__(this);
+            if ( CMTimeMakeWithAtomAsSecond(argv+0, value+0) && CMTimeMakeWithAtomAsSecond(argv+1, value+1) ) switch ( index ) {
+                case 0: switch (CMTimebaseSetAnchorTime(this->clock[this->count], value[0], value[1])) {
+                    case noErr:
+                        __remove__(this);
+                        __fire__all__(this);
+                        break;
                 }
-            } else
-                goto recover;
+                    break;
+                default: switch (CMTimebaseSetAnchorTime(this->clock[index-1], value[0], value[1])) {
+                    case noErr:
+                        __fire__(this, index-1);
+                        break;
+                }
+                    break;
+            }
+            else goto recover;
             break;
         default:
         recover:
@@ -916,19 +941,6 @@ C74_HIDDEN t_max_err const __source__(t_timecode const * const this, t_attr cons
 }
 
 C74_EXPORT void ext_main(void * const _) {
-    if ( !queue ) {
-        queue = dispatch_queue_create("art.xsgn.timecode", DISPATCH_QUEUE_CONCURRENT);
-    }
-    if ( !prime ) {
-        switch (CMTimebaseCreateWithSourceClock(NULL, CMClockGetHostTimeClock(), &prime)) {
-            case noErr:
-                CMTimebaseSetRateAndAnchorTime(prime, 1, kCMTimeZero, kCMTimeZero);
-                break;
-            default:
-                error("[%s] clock error", class->c_sym->s_name);
-                break;
-        }
-    }
     if ( !class ) {
         
         class = class_new("timecode", (method const)__new__, (method const)__del__, sizeof(t_timecode), NULL, A_GIMME, 0);
@@ -946,5 +958,24 @@ C74_EXPORT void ext_main(void * const _) {
         
         class_register(CLASS_BOX, (t_class*const)class);
         
+    }
+    if ( !queue ) {
+        queue = dispatch_queue_create("art.xsgn.timecode", DISPATCH_QUEUE_CONCURRENT);
+    }
+    if ( !prime ) {
+        switch (CMTimebaseCreateWithSourceClock(NULL, CMClockGetHostTimeClock(), &prime)) {
+            case noErr:
+                switch (CMTimebaseSetRateAndAnchorTime(prime, 1, kCMTimeZero, kCMTimeZero)) {
+                    case noErr:
+                        break;
+                    default:
+                        error("[%s] critical error", class->c_sym->s_name);
+                        break;
+                }
+                break;
+            default:
+                error("[%s] clock error", class->c_sym->s_name);
+                break;
+        }
     }
 }
