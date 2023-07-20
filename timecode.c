@@ -753,12 +753,12 @@ C74_HIDDEN void __info__(t_timecode const * const this, t_atom_long const arg) {
 C74_HIDDEN void __note__(t_timecode const * const this, void const * const b, long const m, long const a, char * const s) {
     if ( m == ASSIST_INLET )
         sprintf_tr(s, "\
-bang: output the elapsed time\r\n\
-rate [REAL]: set clock rate, which removes sync state\r\n\
-time [REAL]: set clock time, which removes sync state\r\n\
-info [INTEGER]: set log trace level, 0 is quiet\r\n\
-sync [INTEGER]: export the clock via UDP (INTEGER)\r\n\
-sync [INTEGER] [SYMBOL]: import the clock from (SYMBOL):(INTEGER)");
+bang: output the elapsed time for primary inlet otherwise fire metronome\r\n\
+rate [REAL]: set clock rate, sync state gets removed when primary inlet receives\r\n\
+time [INTEGERAL, REAL, RATIONAL]: set clock time, sync state gets removed when primary inlet receives\r\n\
+info [INTEGERAL]: set log trace level, 0 is quiet\r\n\
+sync [INTEGERAL]: export the clock via UDP (INTEGER)\r\n\
+sync [INTEGERAL] [SYMBOL]: import the clock from (SYMBOL):(INTEGER)");
     else if ( a == 0 )
         sprintf_tr(s, "output elapsed time when bang message is received");
     else if ( a == this->count + 1 )
