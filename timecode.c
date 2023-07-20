@@ -8,6 +8,14 @@ C74_HIDDEN static t_class const * class = NULL;
 C74_HIDDEN static CMTimebaseRef prime = NULL;
 C74_HIDDEN static dispatch_queue_t queue = NULL;
 
+C74_HIDDEN in_addr_t const __addr__(char const * const host) {
+    in_addr_t addr = {0};
+    inet_pton(AF_INET, host, &addr);
+    return addr;
+}
+
+/* rational number type */
+
 typedef struct {
     __int128_t const p;
     __int128_t const q;
@@ -253,6 +261,8 @@ C74_HIDDEN bool const CMTimeMakeWithAtomAsSecond(t_atom const * const source, CM
     return false;
 }
 
+/* timecode object type */
+
 typedef struct {
     t_object const super;
     t_atom_long const count;
@@ -401,129 +411,48 @@ C74_HIDDEN void __remove__(t_timecode const * const this) {
     }
 }
 
-C74_HIDDEN void __sync__(t_timecode const * const this, t_symbol const * const symbol, short const argc, t_atom const * const argv) {
-    __remove__(this);
-    switch ( argc ) {
-        case 1: {
-            struct sockaddr_in const target = {
-                .sin_family = AF_INET,
-                .sin_addr = {
-                    .s_addr = INADDR_ANY,
-                },
-                .sin_port = htons(atom_getlong(argv)),
-                .sin_len = sizeof(struct sockaddr_in),
-                .sin_zero = {0}
-            };
-            dispatch_source_t const tasks = dispatch_source_create(DISPATCH_SOURCE_TYPE_READ, (uintptr_t const)socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP), 0, queue);
-            dispatch_source_set_registration_handler(tasks, ^{
-                int const socket = (int const)dispatch_source_get_handle(tasks);
-                switch (bind(socket, (struct sockaddr*const)&target, sizeof(struct sockaddr_in))) {
-                    case 0:
-                        if ( 3 < this->trace )
-                            post("[%s] bound", class->c_sym->s_name);
-                        break;
-                    default:
-                        error("[%s] bind error", class->c_sym->s_name);
-                        break;
-                }
-            });
-            dispatch_source_set_event_handler(tasks, ^{
-                int const socket = (int const)dispatch_source_get_handle(tasks);
-                CMTime const buff[4] = {
-                    kCMTimeInvalid,
-                    kCMTimeInvalid,
-                    CMTimebaseGetTime(this->clock[this->count]),
-                    this->token,
-                };
-                struct sockaddr_in target = {0};
-                socklen_t length = sizeof(struct sockaddr_in);
-                switch (recvfrom(socket, (void*const)buff, 2 * sizeof(CMTime), 0, (struct sockaddr*const)&target, &length)) {
-                    case 2 * sizeof(CMTime):
-                        switch (sendto(socket, buff, 4 * sizeof(CMTime), 0, (struct sockaddr*const)&target, length)) {
-                            case 4 * sizeof(CMTime):
-                                if ( 2 < this->trace ) {
-                                    char const name[NI_MAXHOST] = {0};
-                                    switch ( getnameinfo((struct sockaddr*const)&target, sizeof(struct sockaddr), (char*const)name, sizeof(name), NULL, 0, 0) ) {
-                                        case 0:
-                                            post("[%s] send time: %lld/%d to %d of %s",
-                                                 class->c_sym->s_name,
-                                                 buff[2].value, buff[2].timescale,
-                                                 ntohs(target.sin_port),
-                                                 name);
-                                            break;
-                                        default:
-                                            post("[%s] send time: %lld/%d to %d",
-                                                 class->c_sym->s_name,
-                                                 buff[2].value, buff[2].timescale,
-                                                 ntohs(target.sin_port));
-                                            break;
-                                    }
-                                }
-                                break;
-                            default:
-                                error("[%s] send error", class->c_sym->s_name);
-                                break;
-                        }
-                        break;
-                    default:
-                        error("[%s] recv error", class->c_sym->s_name);
-                        break;
-                }
-            });
-            dispatch_source_set_cancel_handler(tasks, ^{
-                close((int const)dispatch_source_get_handle(tasks));
+C74_HIDDEN void __export__(t_timecode const * const this, struct sockaddr_in const target) {
+    dispatch_source_t const tasks = dispatch_source_create(DISPATCH_SOURCE_TYPE_READ, (uintptr_t const)socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP), 0, queue);
+    dispatch_source_set_registration_handler(tasks, ^{
+        int const socket = (int const)dispatch_source_get_handle(tasks);
+        switch (bind(socket, (struct sockaddr*const)&target, sizeof(struct sockaddr_in))) {
+            case 0:
                 if ( 3 < this->trace )
-                    post("[%s] server cancel",
-                         class->c_sym->s_name);
-            });
-            dispatch_resume((*(dispatch_source_t*const)(this->tasks + this->count) = tasks));
-            break;
+                    post("[%s] bound", class->c_sym->s_name);
+                break;
+            default:
+                error("[%s] bind error", class->c_sym->s_name);
+                break;
         }
-        case 2: {
-            __block struct {
-                CMTime self;
-                CMTime peer;
-            } anchor = {
-                .self = kCMTimeInvalid,
-                .peer = kCMTimeInvalid,
-            };
-            __block CMTime marked = kCMTimeInvalid;
-            __block CMTime length = kCMTimeInvalid;
-            struct sockaddr_in const target = {
-                .sin_family = AF_INET,
-                .sin_addr = {
-                    .s_addr = INADDR_ANY,
-                },
-                .sin_port = htons(atom_getlong(argv)),
-                .sin_len = sizeof(struct sockaddr_in),
-                .sin_zero = {0}
-            };
-            inet_pton(AF_INET, atom_getsym(argv + 1)->s_name, (struct in_addr*const)&target.sin_addr.s_addr);
-            dispatch_source_t const timer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, queue);
-            dispatch_source_t const tasks = dispatch_source_create(DISPATCH_SOURCE_TYPE_READ, (uintptr_t const)socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP), 0, queue);
-            dispatch_source_set_event_handler(timer, ^{
-                CMTime const buff[2] = {
-                    CMTimebaseGetTime(prime),
-                    CMTimebaseGetTime(this->clock[this->count])
-                };
-                switch (sendto((int const)dispatch_source_get_handle(tasks), buff, 2 * sizeof(CMTime), 0, (struct sockaddr*const)&target, sizeof(struct sockaddr_in))) {
-                    case 2 * sizeof(CMTime):
+    });
+    dispatch_source_set_event_handler(tasks, ^{
+        int const socket = (int const)dispatch_source_get_handle(tasks);
+        CMTime const buff[4] = {
+            kCMTimeInvalid,
+            kCMTimeInvalid,
+            CMTimebaseGetTime(this->clock[this->count]),
+            this->token,
+        };
+        struct sockaddr_in target = {0};
+        socklen_t length = sizeof(struct sockaddr_in);
+        switch (recvfrom(socket, (void*const)buff, 2 * sizeof(CMTime), 0, (struct sockaddr*const)&target, &length)) {
+            case 2 * sizeof(CMTime):
+                switch (sendto(socket, buff, 4 * sizeof(CMTime), 0, (struct sockaddr*const)&target, length)) {
+                    case 4 * sizeof(CMTime):
                         if ( 2 < this->trace ) {
                             char const name[NI_MAXHOST] = {0};
-                            switch ( getnameinfo((struct sockaddr const*const)&target, sizeof(struct sockaddr_in), (char*const)name, sizeof(name), NULL, 0, 0) ) {
+                            switch ( getnameinfo((struct sockaddr*const)&target, sizeof(struct sockaddr), (char*const)name, sizeof(name), NULL, 0, 0) ) {
                                 case 0:
-                                    post("[%s] send time: %lld/%d, host: %lld/%d to %d of %s",
+                                    post("[%s] send time: %lld/%d to %d of %s",
                                          class->c_sym->s_name,
-                                         buff[1].value, buff[1].timescale,
-                                         buff[0].value, buff[0].timescale,
+                                         buff[2].value, buff[2].timescale,
                                          ntohs(target.sin_port),
                                          name);
                                     break;
                                 default:
-                                    post("[%s] send time: %lld/%d, host: %lld/%d to %d",
+                                    post("[%s] send time: %lld/%d to %d",
                                          class->c_sym->s_name,
-                                         buff[1].value, buff[1].timescale,
-                                         buff[0].value, buff[0].timescale,
+                                         buff[2].value, buff[2].timescale,
                                          ntohs(target.sin_port));
                                     break;
                             }
@@ -533,106 +462,199 @@ C74_HIDDEN void __sync__(t_timecode const * const this, t_symbol const * const s
                         error("[%s] send error", class->c_sym->s_name);
                         break;
                 }
-                CMTimebaseSetTimerDispatchSourceNextFireTime(prime, timer, CMTimeMultiply(this->check, 1 + CMTimeDiv(buff[0], this->check)), 0);
-            });
-            dispatch_source_set_registration_handler(tasks, ^{
-                dispatch_resume(timer);
-                CMTimebaseAddTimerDispatchSource(prime, timer);
-                CMTimebaseSetTimerDispatchSourceToFireImmediately(prime, timer);
-                if ( 3 < this->trace )
-                    post("[%s] client regist",
-                         class->c_sym->s_name);
-            });
-            dispatch_source_set_event_handler(tasks, ^{
-                CMTime const buff[6] = {
-                    /*0*/kCMTimeInvalid,// self prime clock at SEND
-                    /*1*/kCMTimeInvalid,// self this->clock at SEND
-                    /*2*/kCMTimeInvalid,// peer clock time
-                    /*3*/kCMTimeInvalid,// peer signature
-                    /*4*/CMTimebaseGetTime(prime),       // self prime clock at RECV
-                    /*5*/CMTimebaseGetTime(this->clock[this->count]), // self this->clock at RECV
-                };
-                switch (recv((int const)dispatch_source_get_handle(tasks), (void*const)buff, 4 * sizeof(CMTime), 0)) {
-                    case 4 * sizeof(CMTime):
-                        if ( CMTimeCompare(marked, buff[3]) ) {
-                            length = kCMTimePositiveInfinity;
-                            marked = buff[3];
-                            if ( 1 < this->trace )
-                                post("[%s] sync initialized",
-                                     class->c_sym->s_name);
-                        } else {
-                            struct {
-                                CMTime const time;
-                                CMTime const base;
-                            } const self = {
-                                .time = CMTimeMultiplyByRatio(CMTimeAdd(buff[1], buff[5]), 1, 2),
-                                .base = CMTimeMultiplyByRatio(CMTimeAdd(buff[0], buff[4]), 1, 2),
-                            }, peer = {
-                                .time = buff[2],
-                                .base = kCMTimeIndefinite,
-                            };
-                            CMTime const travel = CMTimeSubtract(buff[4], buff[0]);
-                            switch ( CMTimeCompare(travel, length) ) {
-                                case -1:
-                                    length = travel;
-                                    anchor.peer = peer.time;
-                                    anchor.self = self.base;
-                                    if ( 1 < this->trace )
-                                        post("[%s] anchor, peer: %lld/%d, host: %lld/%d",
-                                             class->c_sym->s_name,
-                                             anchor.peer.value, anchor.peer.timescale,
-                                             anchor.self.value, anchor.self.timescale);
-                                    break;
-                                default:
-                                    if ( rand() < exp ( CMTimeGetSeconds(travel) / CMTimeGetSeconds(length) - 1 ) * RAND_MAX )
-                                        switch (CMTimeCompare(this->limit, CMTimeAbsoluteValue(CMTimeSubtract(self.time, peer.time)))) {
-                                            case -1:
-                                                CMTimebaseSetRateAndAnchorTime(this->clock[this->count],
-                                                                               rational_to_real(rational_simplify(rational_div(rational_sub(rational_make_with_CMTime(peer.time), rational_make_with_CMTime(anchor.peer)),
-                                                                                                                               rational_sub(rational_make_with_CMTime(self.base), rational_make_with_CMTime(anchor.self))))),
-                                                                               peer.time,
-                                                                               self.base);
-                                                __fire__all__(this);
-                                                if ( 0 < this->trace )
-                                                    post("[%s] rate: %lf, time: %lld/%d, host: %lld/%d, from: %lld/%d",
-                                                         class->c_sym->s_name,
-                                                         rational_to_real(rational_simplify(rational_div(rational_sub(rational_make_with_CMTime(peer.time), rational_make_with_CMTime(anchor.peer)),
-                                                                                                         rational_sub(rational_make_with_CMTime(self.base), rational_make_with_CMTime(anchor.self))))),
-                                                         peer.time.value, peer.time.timescale,
-                                                         self.base.value, self.base.timescale,
-                                                         self.time.value, self.time.timescale);
-                                                break;
-                                            default:
-                                                if ( 1 < this->trace )
-                                                    post("[%s] %lld/%d is less",
-                                                         class->c_sym->s_name,
-                                                         CMTimeSubtract(self.time, peer.time).value,
-                                                         CMTimeSubtract(self.time, peer.time).timescale);
-                                        }
-                                    else if ( 2 < this->trace )
-                                        post("[%s] unreliable response", class->c_sym->s_name);
-                                    break;
-                            }
-                        }
-                        break;
-                    default:
-                        error("[%s] recv error", class->c_sym->s_name);
-                        break;
-                }
-            });
-            dispatch_source_set_cancel_handler(tasks, ^{
-                CMTimebaseRemoveTimerDispatchSource(prime, timer);
-                dispatch_source_cancel(timer);
-                dispatch_release(timer);
-                if ( 3 < this->trace )
-                    post("[%s] client cancel",
-                         class->c_sym->s_name);
-            });
-            dispatch_resume((*(dispatch_source_t*const)(this->tasks + this->count) = tasks));
-            break;
+                break;
+            default:
+                error("[%s] recv error", class->c_sym->s_name);
+                break;
         }
+    });
+    dispatch_source_set_cancel_handler(tasks, ^{
+        close((int const)dispatch_source_get_handle(tasks));
+        if ( 3 < this->trace )
+            post("[%s] server cancel",
+                 class->c_sym->s_name);
+    });
+    dispatch_resume((*(dispatch_source_t*const)(this->tasks + this->count) = tasks));
+}
+
+C74_HIDDEN void __import__(t_timecode const * const this, struct sockaddr_in const target) {
+    __block struct {
+        CMTime self;
+        CMTime peer;
+    } anchor = {
+        .self = kCMTimeInvalid,
+        .peer = kCMTimeInvalid,
+    };
+    __block CMTime marked = kCMTimeInvalid;
+    __block CMTime length = kCMTimeInvalid;
+    
+    dispatch_source_t const timer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, queue);
+    dispatch_source_t const tasks = dispatch_source_create(DISPATCH_SOURCE_TYPE_READ, (uintptr_t const)socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP), 0, queue);
+    dispatch_source_set_event_handler(timer, ^{
+        CMTime const buff[2] = {
+            CMTimebaseGetTime(prime),
+            CMTimebaseGetTime(this->clock[this->count])
+        };
+        switch (sendto((int const)dispatch_source_get_handle(tasks), buff, 2 * sizeof(CMTime), 0, (struct sockaddr*const)&target, sizeof(struct sockaddr_in))) {
+            case 2 * sizeof(CMTime):
+                if ( 2 < this->trace ) {
+                    char const name[NI_MAXHOST] = {0};
+                    switch ( getnameinfo((struct sockaddr const*const)&target, sizeof(struct sockaddr_in), (char*const)name, sizeof(name), NULL, 0, 0) ) {
+                        case 0:
+                            post("[%s] send time: %lld/%d, host: %lld/%d to %d of %s",
+                                 class->c_sym->s_name,
+                                 buff[1].value, buff[1].timescale,
+                                 buff[0].value, buff[0].timescale,
+                                 ntohs(target.sin_port),
+                                 name);
+                            break;
+                        default:
+                            post("[%s] send time: %lld/%d, host: %lld/%d to %d",
+                                 class->c_sym->s_name,
+                                 buff[1].value, buff[1].timescale,
+                                 buff[0].value, buff[0].timescale,
+                                 ntohs(target.sin_port));
+                            break;
+                    }
+                }
+                break;
+            default:
+                error("[%s] send error", class->c_sym->s_name);
+                break;
+        }
+        CMTimebaseSetTimerDispatchSourceNextFireTime(prime, timer, CMTimeMultiply(this->check, 1 + CMTimeDiv(buff[0], this->check)), 0);
+    });
+    dispatch_source_set_registration_handler(tasks, ^{
+        dispatch_resume(timer);
+        CMTimebaseAddTimerDispatchSource(prime, timer);
+        CMTimebaseSetTimerDispatchSourceToFireImmediately(prime, timer);
+        if ( 3 < this->trace )
+            post("[%s] client regist",
+                 class->c_sym->s_name);
+    });
+    dispatch_source_set_event_handler(tasks, ^{
+        CMTime const buff[6] = {
+            /*0*/kCMTimeInvalid,// self prime clock at SEND
+            /*1*/kCMTimeInvalid,// self this->clock at SEND
+            /*2*/kCMTimeInvalid,// peer clock time
+            /*3*/kCMTimeInvalid,// peer signature
+            /*4*/CMTimebaseGetTime(prime),       // self prime clock at RECV
+            /*5*/CMTimebaseGetTime(this->clock[this->count]), // self this->clock at RECV
+        };
+        switch (recv((int const)dispatch_source_get_handle(tasks), (void*const)buff, 4 * sizeof(CMTime), 0)) {
+            case 4 * sizeof(CMTime):
+                if ( CMTimeCompare(marked, buff[3]) ) {
+                    length = kCMTimePositiveInfinity;
+                    marked = buff[3];
+                    if ( 1 < this->trace )
+                        post("[%s] sync initialized",
+                             class->c_sym->s_name);
+                } else {
+                    struct {
+                        CMTime const time;
+                        CMTime const base;
+                    } const self = {
+                        .time = CMTimeMultiplyByRatio(CMTimeAdd(buff[1], buff[5]), 1, 2),
+                        .base = CMTimeMultiplyByRatio(CMTimeAdd(buff[0], buff[4]), 1, 2),
+                    }, peer = {
+                        .time = buff[2],
+                        .base = kCMTimeIndefinite,
+                    };
+                    CMTime const travel = CMTimeSubtract(buff[4], buff[0]);
+                    switch ( CMTimeCompare(travel, length) ) {
+                        case -1:
+                            length = travel;
+                            anchor.peer = peer.time;
+                            anchor.self = self.base;
+                            if ( 1 < this->trace )
+                                post("[%s] anchor, peer: %lld/%d, host: %lld/%d",
+                                     class->c_sym->s_name,
+                                     anchor.peer.value, anchor.peer.timescale,
+                                     anchor.self.value, anchor.self.timescale);
+                            break;
+                        default:
+                            if ( rand() < exp ( CMTimeGetSeconds(travel) / CMTimeGetSeconds(length) - 1 ) * RAND_MAX )
+                                switch (CMTimeCompare(this->limit, CMTimeAbsoluteValue(CMTimeSubtract(self.time, peer.time)))) {
+                                    case -1:
+                                        CMTimebaseSetRateAndAnchorTime(this->clock[this->count],
+                                                                       rational_to_real(rational_simplify(rational_div(rational_sub(rational_make_with_CMTime(peer.time), rational_make_with_CMTime(anchor.peer)),
+                                                                                                                       rational_sub(rational_make_with_CMTime(self.base), rational_make_with_CMTime(anchor.self))))),
+                                                                       peer.time,
+                                                                       self.base);
+                                        __fire__all__(this);
+                                        if ( 0 < this->trace )
+                                            post("[%s] rate: %lf, time: %lld/%d, host: %lld/%d, from: %lld/%d",
+                                                 class->c_sym->s_name,
+                                                 rational_to_real(rational_simplify(rational_div(rational_sub(rational_make_with_CMTime(peer.time), rational_make_with_CMTime(anchor.peer)),
+                                                                                                 rational_sub(rational_make_with_CMTime(self.base), rational_make_with_CMTime(anchor.self))))),
+                                                 peer.time.value, peer.time.timescale,
+                                                 self.base.value, self.base.timescale,
+                                                 self.time.value, self.time.timescale);
+                                        break;
+                                    default:
+                                        if ( 1 < this->trace )
+                                            post("[%s] %lld/%d is less",
+                                                 class->c_sym->s_name,
+                                                 CMTimeSubtract(self.time, peer.time).value,
+                                                 CMTimeSubtract(self.time, peer.time).timescale);
+                                }
+                            else if ( 2 < this->trace )
+                                post("[%s] unreliable response", class->c_sym->s_name);
+                            break;
+                    }
+                }
+                break;
+            default:
+                error("[%s] recv error", class->c_sym->s_name);
+                break;
+        }
+    });
+    dispatch_source_set_cancel_handler(tasks, ^{
+        CMTimebaseRemoveTimerDispatchSource(prime, timer);
+        dispatch_source_cancel(timer);
+        dispatch_release(timer);
+        if ( 3 < this->trace )
+            post("[%s] client cancel",
+                 class->c_sym->s_name);
+    });
+    dispatch_resume((*(dispatch_source_t*const)(this->tasks + this->count) = tasks));
+}
+
+C74_HIDDEN void __sync__(t_timecode const * const this, t_symbol const * const symbol, short const argc, t_atom const * const argv) {
+    switch ( proxy_getinlet((t_object*const)this)) {
+        case 0:
+            switch ( argc ) {
+                case 1:
+                    __remove__(this);
+                    __export__(this, (struct sockaddr_in const) {
+                        .sin_family = AF_INET,
+                        .sin_addr = {
+                            .s_addr = INADDR_ANY,
+                        },
+                        .sin_port = htons(atom_getlong(argv)),
+                        .sin_len = sizeof(struct sockaddr_in),
+                        .sin_zero = {0}
+                    });
+                    break;
+                case 2:
+                    __remove__(this);
+                    __import__(this, (struct sockaddr_in const) {
+                        .sin_family = AF_INET,
+                        .sin_addr = {
+                            .s_addr = __addr__(atom_getsym(argv + 1)->s_name),
+                        },
+                            .sin_port = htons(atom_getlong(argv + 0)),
+                            .sin_len = sizeof(struct sockaddr_in),
+                            .sin_zero = {0}
+                    });
+                    break;
+                default:
+                    error("[%s] not allowed", class->c_sym->s_name);
+                    break;
+            }
+            break;
         default:
-            error("not allowed");
+            error("[%s] only 1st inlet can accept sync message", class->c_sym->s_name);
             break;
     }
 }
@@ -653,7 +675,7 @@ C74_HIDDEN void __time__(t_timecode const * const this, t_symbol const * const s
             if ( CMTimeMakeWithAtomAsSecond(argv+0, value+0) ) {
                 if ( index ) {
                     CMTimebaseSetTime(this->clock[index-1], value[0]);
-                    __fire__(this, index);
+                    __fire__(this, index-1);
                 } else {
                     __remove__(this);
                     CMTimebaseSetTime(this->clock[this->count], value[0]);
@@ -666,7 +688,7 @@ C74_HIDDEN void __time__(t_timecode const * const this, t_symbol const * const s
             if ( CMTimeMakeWithAtomAsSecond(argv+0, value+0) && CMTimeMakeWithAtomAsSecond(argv+1, value+1) ) {
                 if ( index ) {
                     CMTimebaseSetAnchorTime(this->clock[index-1], value[0], value[1]);
-                    __fire__(this, index);
+                    __fire__(this, index-1);
                 } else {
                     __remove__(this);
                     CMTimebaseSetAnchorTime(this->clock[this->count], value[0], value[1]);
@@ -922,5 +944,6 @@ C74_EXPORT void ext_main(void * const _) {
         class_addattr((t_class*const)class, attribute_new("threshold", gensym("float64"), 0, NULL, (method const)__threshold__));
         
         class_register(CLASS_BOX, (t_class*const)class);
+        
     }
 }
