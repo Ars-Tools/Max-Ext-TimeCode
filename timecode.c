@@ -594,7 +594,7 @@ C74_HIDDEN void __import__(t_timecode const * const this, struct sockaddr_in con
                                      anchor.self.value, anchor.self.timescale);
                             break;
                         default:
-                            if ( rand() < exp ( CMTimeGetSeconds(travel) / CMTimeGetSeconds(length) - 1 ) * RAND_MAX )
+                            if ( CMTimeGetSeconds(travel) * rand() < CMTimeGetSeconds(length) * RAND_MAX )
                                 switch (CMTimeCompare(this->limit, CMTimeAbsoluteValue(CMTimeSubtract(self.time, peer.time)))) {
                                     case -1:
                                         CMTimebaseSetRateAndAnchorTime(this->clock[this->count],
@@ -743,8 +743,8 @@ C74_HIDDEN void __del__(t_timecode const * const this) {
     sysmem_freeptr((void*const)this->epoch);
 }
 
-C74_HIDDEN void __info__(t_timecode const * const this, t_atom_long const arg) {
-    if ( (*(t_atom_long*const)&this->trace = arg) )
+C74_HIDDEN void __info__(t_timecode * const this, t_atom_long const arg) {
+    if ( ( this->trace = arg ) )
         post("[%s] log level %d",
              class->c_sym->s_name,
              this->trace);
@@ -767,24 +767,24 @@ sync [INTEGERAL] [SYMBOL]: import the clock from (SYMBOL):(INTEGER)");
         sprintf_tr(s, "output elapsed count every %lld/%d (≒%.3lf) second", this->epoch[a-1].value, this->epoch[a-1].timescale, CMTimeGetSeconds(this->epoch[a-1]));
 }
 
-C74_HIDDEN t_max_err const __interval__(t_timecode const * const this, void * const attr, long const argc, t_atom const * const argv) {
+C74_HIDDEN t_max_err const __interval__(t_timecode * const this, void * const attr, long const argc, t_atom const * const argv) {
     CMTime check = {0};
     switch ( argc ) {
         case 1:
             if ( CMTimeMakeWithAtomAsSecond(argv, &check) )
-                *(CMTime*const)&this->check = check;
+                this->check = check;
             return MAX_ERR_NONE;
         default:
             return MAX_ERR_GENERIC;
     }
 }
 
-C74_HIDDEN t_max_err const __threshold__(t_timecode const * const this, void * const attr, long const argc, t_atom const * const argv) {
+C74_HIDDEN t_max_err const __threshold__(t_timecode * const this, void * const attr, long const argc, t_atom const * const argv) {
     CMTime limit = {0};
     switch ( argc ) {
         case 1:
             if ( CMTimeMakeWithAtomAsSecond(argv, &limit) )
-                *(CMTime*const)&this->limit = limit;
+                this->limit = limit;
             return MAX_ERR_NONE;
         default:
             return MAX_ERR_GENERIC;
@@ -814,8 +814,7 @@ C74_HIDDEN t_max_err const __source__(t_timecode const * const this, t_attr cons
     switch ( argc ) {
         case 1:
             switch ( atom_gettype((t_atom*const)argv) ) {
-                case A_SYM: {
-                    t_symbol const * const symbol = atom_getsym((t_atom*const)argv);
+                case A_SYM:
                     for ( register long k = 0, K = size / sizeof(AudioDeviceID) ; k < K ; ++ k ) {
                         {
                             AudioObjectPropertyAddress const address = {
@@ -864,7 +863,7 @@ C74_HIDDEN t_max_err const __source__(t_timecode const * const this, t_attr cons
                                     continue;
                             }
                             CMClockRef clock = NULL;
-                            if ( !strcmp(name, symbol->s_name) )
+                            if ( !strcmp(name, atom_getsym((t_atom*const)argv)->s_name) )
                                 switch (CMAudioDeviceClockCreateFromAudioDeviceID(NULL, devices[k], &clock)) {
                                     case noErr:
                                         switch (CMTimebaseSetSourceClock(this->clock[this->count], clock)) {
@@ -881,10 +880,9 @@ C74_HIDDEN t_max_err const __source__(t_timecode const * const this, t_attr cons
                                 }
                         }
                     }
-                }
             }
         default:
-            error("[%s] choose one", class->c_sym->s_name);
+            error("[%s] choose one from", class->c_sym->s_name);
             for ( register long k = 0, K = size / sizeof(AudioDeviceID) ; k < K ; ++ k ) {
                 {
                     AudioObjectPropertyAddress const address = {
