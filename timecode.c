@@ -8,10 +8,14 @@ C74_HIDDEN static t_class const * class = NULL;
 C74_HIDDEN static CMTimebaseRef prime = NULL;
 C74_HIDDEN static dispatch_queue_t queue = NULL;
 
-C74_HIDDEN in_addr_t const __addr__(char const * const host) {
+C74_HIDDEN in_addr_t const addr(char const * const host) {
     in_addr_t addr = {0};
     inet_pton(AF_INET, host, &addr);
     return addr;
+}
+
+C74_HIDDEN __uint128_t const gcd(__uint128_t const x, __uint128_t const y) {
+    return y ? gcd(y, x % y) : x;
 }
 
 /* rational number type */
@@ -20,10 +24,6 @@ typedef struct {
     __int128_t const p;
     __int128_t const q;
 } rational256_t;
-
-C74_HIDDEN __uint128_t const gcd(__uint128_t const x, __uint128_t const y) {
-    return y ? gcd(y, x % y) : x;
-}
 
 #define rational_make(x, y) ((rational256_t const) { .p = x, .q = y })
 
@@ -286,12 +286,13 @@ C74_HIDDEN short const __parse__(CMTime * const target, short const argc, t_atom
     return cursor;
 }
 
-C74_HIDDEN void __fire__(t_timecode const * const this, t_atom_long const type) {
-    if ( 0 <= type && type < this->count )
-        switch (CMTimebaseSetTimerDispatchSourceNextFireTime(this->clock[type], this->tasks[type], CMTimeMultiply(this->epoch[type], 1 + CMTimeDiv(CMTimebaseGetTime(this->clock[type]), this->epoch[type])), 0)) {
-            case noErr:
-                break;
-        }
+C74_HIDDEN void __fire__(t_timecode const * const this, t_atom_long const index) {
+    assert( 0 <= index );
+    assert( index < this->count );
+    switch (CMTimebaseSetTimerDispatchSourceNextFireTime(this->clock[index], this->tasks[index], CMTimeMultiply(this->epoch[index], 1 + CMTimeDiv(CMTimebaseGetTime(this->clock[index]), this->epoch[index])), 0)) {
+        case noErr:
+            break;
+    }
 }
 
 C74_HIDDEN void __fire__all__(t_timecode const * const this) {
@@ -662,7 +663,7 @@ C74_HIDDEN void __sync__(t_timecode const * const this, t_symbol const * const s
             __import__(this, (struct sockaddr_in const) {
                 .sin_family = AF_INET,
                 .sin_addr = {
-                    .s_addr = __addr__(atom_getsym(argv + 1)->s_name)
+                    .s_addr = addr(atom_getsym(argv + 1)->s_name)
                 },
                 .sin_port = htons(atom_getlong(argv + 0)),
                 .sin_len = sizeof(struct sockaddr_in),
