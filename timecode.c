@@ -359,13 +359,14 @@ C74_HIDDEN t_timecode const * const __new__(t_symbol const * const symbol, short
                         
                         CMTimebaseSetRateAndAnchorTime(clock, 1, kCMTimeZero, kCMTimeZero);
                         
-                        proxy_new_forinlet((t_object*const)&this->super, k + 1, NULL, inlet_new(this, NULL));
+                        proxy_new_forinlet((t_object*const)this, k + 1, NULL, inlet_new(this, NULL));
                         t_outlet * const count = intout(this);
                         
                         dispatch_source_set_registration_handler(timer, ^{
                             CMTime const epoch = this->epoch[k];
+                            t_atom_long const cycle = CMTimeDiv(CMTimebaseGetTime(clock), epoch);
                             CMTimebaseAddTimerDispatchSource(clock, timer);
-                            CMTimebaseSetTimerDispatchSourceNextFireTime(clock, timer, CMTimeMultiply(epoch, 1 + CMTimeDiv(CMTimebaseGetTime(clock), epoch)), 0);
+                            CMTimebaseSetTimerDispatchSourceNextFireTime(clock, timer, CMTimeMultiply(epoch, 1 + (CMTimeScale const)cycle), 0);
                         });
                         
                         dispatch_source_set_event_handler(timer, ^{
