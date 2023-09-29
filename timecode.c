@@ -1,7 +1,6 @@
 #include"ext.h"            // standard Max include, always required (except in Jitter)
-//#include"ext_obex.h"        // required for "new" style objects
-
-//#include <stdatomic.h>
+#include<netdb.h>
+#include<arpa/inet.h>
 #include<CoreMedia/CoreMedia.h>
 
 C74_HIDDEN static t_class const * class = NULL;
