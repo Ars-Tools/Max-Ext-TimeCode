@@ -213,9 +213,6 @@ C74_HIDDEN bool const CMTimeMakeWithAtomAsBPM(t_atom const * const source, CMTim
                         return true;
                     default:
                         *result = kCMTimeInvalid;
-                        error("[%s] invalid format %s",
-                              class->c_sym->s_name,
-                              string);
                         break;
                 }
                 break;
@@ -246,9 +243,6 @@ C74_HIDDEN bool const CMTimeMakeWithAtomAsSecond(t_atom const * const source, CM
                         return true;
                     default:
                         *result = kCMTimeInvalid;
-                        error("[%s] invalid format %s",
-                              class->c_sym->s_name,
-                              string);
                         break;
                 }
                 break;
@@ -305,7 +299,7 @@ C74_HIDDEN void __beat__(t_timecode const * const this, t_symbol const * const s
     CMTime value = {0};
     switch ( index ) {
         case 0:
-            error("[%s] primary inlet cannot accept beat message", class->c_sym->s_name);
+            object_error((t_object*const)this, "primary inlet cannot accept beat message");
             break;
         default:
             switch ( argc ) {
@@ -338,7 +332,7 @@ C74_HIDDEN t_timecode const * const __new__(t_symbol const * const symbol, short
         *(t_outlet const**const)&this->pulse = bangout(this);
         
         if ( CMTimebaseCreateWithSourceTimebase(NULL, prime, (CMTimebaseRef*const)this->clock + this->count) )
-            error("[%s] timebase error", class->c_sym->s_name);
+            object_error((t_object*const)this, "timebase error");
         
         else {
             
@@ -359,7 +353,7 @@ C74_HIDDEN t_timecode const * const __new__(t_symbol const * const symbol, short
                 for ( register t_atom_long k = this->count - 1 ; 0 <= k ; --k ) {
                     
                     if ( CMTimebaseCreateWithSourceTimebase(NULL, this->clock[this->count], (CMTimebaseRef*const)this->clock + k) )
-                        error("[%s] timebase error", class->c_sym->s_name);
+                        object_error((t_object*const)this, "timebase error");
                     
                     else {
                         
@@ -436,10 +430,10 @@ C74_HIDDEN void __export__(t_timecode const * const this, struct sockaddr_in con
         switch (bind(socket, (struct sockaddr*const)&target, sizeof(struct sockaddr_in))) {
             case 0:
                 if ( 3 < this->trace )
-                    post("[%s] bound", class->c_sym->s_name);
+                    object_post((t_object*const)this, "bound");
                 break;
             default:
-                error("[%s] bind error", class->c_sym->s_name);
+                object_error((t_object*const)this, "bind error");
                 break;
         }
     });
@@ -461,36 +455,33 @@ C74_HIDDEN void __export__(t_timecode const * const this, struct sockaddr_in con
                             char const name[NI_MAXHOST] = {0};
                             switch ( getnameinfo((struct sockaddr*const)&target, sizeof(struct sockaddr), (char*const)name, sizeof(name), NULL, 0, 0) ) {
                                 case 0:
-                                    post("[%s] send time: %lld/%d to %d of %s",
-                                         class->c_sym->s_name,
-                                         buff[2].value, buff[2].timescale,
-                                         ntohs(target.sin_port),
-                                         name);
+                                    object_post((t_object*const)this, "send time: %ld/%d to %d of %s",
+                                                buff[2].value, buff[2].timescale,
+                                                ntohs(target.sin_port),
+                                                name);
                                     break;
                                 default:
-                                    post("[%s] send time: %lld/%d to %d",
-                                         class->c_sym->s_name,
-                                         buff[2].value, buff[2].timescale,
-                                         ntohs(target.sin_port));
+                                    object_post((t_object*const)this, "send time: %ld/%d to %d",
+                                                buff[2].value, buff[2].timescale,
+                                                ntohs(target.sin_port));
                                     break;
                             }
                         }
                         break;
                     default:
-                        error("[%s] send error", class->c_sym->s_name);
+                        object_error((t_object*const)this, "send error");
                         break;
                 }
                 break;
             default:
-                error("[%s] recv error", class->c_sym->s_name);
+                object_error((t_object*const)this, "recv error");
                 break;
         }
     });
     dispatch_source_set_cancel_handler(tasks, ^{
         close((int const)dispatch_source_get_handle(tasks));
         if ( 3 < this->trace )
-            post("[%s] server cancel",
-                 class->c_sym->s_name);
+            object_post((t_object*const)this, "server cancel");
     });
     dispatch_resume((*(dispatch_source_t*const)(this->tasks + this->count) = tasks));
 }
@@ -519,25 +510,25 @@ C74_HIDDEN void __import__(t_timecode const * const this, struct sockaddr_in con
                     char const name[NI_MAXHOST] = {0};
                     switch ( getnameinfo((struct sockaddr const*const)&target, sizeof(struct sockaddr_in), (char*const)name, sizeof(name), NULL, 0, 0) ) {
                         case 0:
-                            post("[%s] send time: %lld/%d, host: %lld/%d to %d of %s",
-                                 class->c_sym->s_name,
-                                 buff[1].value, buff[1].timescale,
-                                 buff[0].value, buff[0].timescale,
-                                 ntohs(target.sin_port),
-                                 name);
+                            object_post((t_object*const)this,
+                                        "send time: %lld/%d, host: %lld/%d to %d of %s",
+                                        buff[1].value, buff[1].timescale,
+                                        buff[0].value, buff[0].timescale,
+                                        ntohs(target.sin_port),
+                                        name);
                             break;
                         default:
-                            post("[%s] send time: %lld/%d, host: %lld/%d to %d",
-                                 class->c_sym->s_name,
-                                 buff[1].value, buff[1].timescale,
-                                 buff[0].value, buff[0].timescale,
-                                 ntohs(target.sin_port));
+                            object_post((t_object*const)this,
+                                        "send time: %lld/%d, host: %lld/%d to %d",
+                                        buff[1].value, buff[1].timescale,
+                                        buff[0].value, buff[0].timescale,
+                                        ntohs(target.sin_port));
                             break;
                     }
                 }
                 break;
             default:
-                error("[%s] send error", class->c_sym->s_name);
+                object_error((t_object*const)this, "send error");
                 break;
         }
         switch (CMTimebaseSetTimerDispatchSourceNextFireTime(prime, timer, CMTimeMultiply(this->check, 1 + CMTimeDiv(buff[0], this->check)), 0)) {
@@ -550,8 +541,7 @@ C74_HIDDEN void __import__(t_timecode const * const this, struct sockaddr_in con
         CMTimebaseAddTimerDispatchSource(prime, timer);
         CMTimebaseSetTimerDispatchSourceToFireImmediately(prime, timer);
         if ( 3 < this->trace )
-            post("[%s] client regist",
-                 class->c_sym->s_name);
+            object_post((t_object*const)this, "client regist");
     });
     dispatch_source_set_event_handler(tasks, ^{
         CMTime const buff[6] = {
@@ -568,8 +558,7 @@ C74_HIDDEN void __import__(t_timecode const * const this, struct sockaddr_in con
                     length = kCMTimePositiveInfinity;
                     marked = buff[3];
                     if ( 1 < this->trace )
-                        post("[%s] sync initialized",
-                             class->c_sym->s_name);
+                        object_post((t_object*const)this, "sync initialized");
                 } else {
                     struct {
                         CMTime const time;
@@ -588,10 +577,9 @@ C74_HIDDEN void __import__(t_timecode const * const this, struct sockaddr_in con
                             anchor.peer = peer.time;
                             anchor.self = self.base;
                             if ( 1 < this->trace )
-                                post("[%s] anchor, peer: %lld/%d, host: %lld/%d",
-                                     class->c_sym->s_name,
-                                     anchor.peer.value, anchor.peer.timescale,
-                                     anchor.self.value, anchor.self.timescale);
+                                object_post((t_object*const)this, "anchor, peer: %lld/%d, host: %lld/%d",
+                                            anchor.peer.value, anchor.peer.timescale,
+                                            anchor.self.value, anchor.self.timescale);
                             break;
                         default:
                             if ( CMTimeGetSeconds(travel) * rand() < CMTimeGetSeconds(length) * RAND_MAX )
@@ -604,29 +592,29 @@ C74_HIDDEN void __import__(t_timecode const * const this, struct sockaddr_in con
                                                                        self.base);
                                         __fire__all__(this);
                                         if ( 0 < this->trace )
-                                            post("[%s] rate: %lf, time: %lld/%d, host: %lld/%d, from: %lld/%d",
-                                                 class->c_sym->s_name,
-                                                 rational_to_real(rational_simplify(rational_div(rational_sub(rational_make_with_CMTime(peer.time), rational_make_with_CMTime(anchor.peer)),
+                                            object_post((t_object*const)this,
+                                                        "rate: %lf, time: %lld/%d, host: %lld/%d, from: %lld/%d",
+                                                        rational_to_real(rational_simplify(rational_div(rational_sub(rational_make_with_CMTime(peer.time), rational_make_with_CMTime(anchor.peer)),
                                                                                                  rational_sub(rational_make_with_CMTime(self.base), rational_make_with_CMTime(anchor.self))))),
-                                                 peer.time.value, peer.time.timescale,
-                                                 self.base.value, self.base.timescale,
-                                                 self.time.value, self.time.timescale);
+                                                        peer.time.value, peer.time.timescale,
+                                                        self.base.value, self.base.timescale,
+                                                        self.time.value, self.time.timescale);
                                         break;
                                     default:
                                         if ( 1 < this->trace )
-                                            post("[%s] %lld/%d is less",
-                                                 class->c_sym->s_name,
-                                                 CMTimeSubtract(self.time, peer.time).value,
-                                                 CMTimeSubtract(self.time, peer.time).timescale);
+                                            object_post((t_object*const)this,
+                                                        "%lld/%d is less",
+                                                        CMTimeSubtract(self.time, peer.time).value,
+                                                        CMTimeSubtract(self.time, peer.time).timescale);
                                 }
                             else if ( 2 < this->trace )
-                                post("[%s] unreliable response", class->c_sym->s_name);
+                                object_post((t_object*const)this, "unreliable response");
                             break;
                     }
                 }
                 break;
             default:
-                error("[%s] recv error", class->c_sym->s_name);
+                object_error((t_object*const)this, "recv error");
                 break;
         }
     });
@@ -635,15 +623,14 @@ C74_HIDDEN void __import__(t_timecode const * const this, struct sockaddr_in con
         dispatch_source_cancel(timer);
         dispatch_release(timer);
         if ( 3 < this->trace )
-            post("[%s] client cancel",
-                 class->c_sym->s_name);
+            object_post((t_object*const)this, "client cancel");
     });
     dispatch_resume((*(dispatch_source_t*const)(this->tasks + this->count) = tasks));
 }
 
 C74_HIDDEN void __sync__(t_timecode const * const this, t_symbol const * const symbol, short const argc, t_atom const * const argv) {
     if ( proxy_getinlet((t_object*const)this))
-        error("[%s] only primary inlet can accept sync message", class->c_sym->s_name);
+        object_error((t_object*const)this, "only primary inlet can accept sync message");
     else switch ( argc ) {
         case 1:
             __remove__(this);
@@ -670,7 +657,7 @@ C74_HIDDEN void __sync__(t_timecode const * const this, t_symbol const * const s
             });
             break;
         default:
-            error("[%s] not allowed", class->c_sym->s_name);
+            object_error((t_object*const)this, "not allowed");
             break;
     }
 }
@@ -725,7 +712,7 @@ C74_HIDDEN void __time__(t_timecode const * const this, t_symbol const * const s
             break;
         default:
         recover:
-            error("[%s] %s message can contain single integer, real or rational number", class->c_sym->s_name, symbol->s_name);
+            object_error((t_object*const)this, "%s message can contain single integer, real or rational number", symbol->s_name);
             break;
     }
 }
@@ -745,9 +732,7 @@ C74_HIDDEN void __del__(t_timecode const * const this) {
 
 C74_HIDDEN void __info__(t_timecode * const this, t_atom_long const arg) {
     if ( ( this->trace = arg ) )
-        post("[%s] log level %d",
-             class->c_sym->s_name,
-             this->trace);
+        object_post((t_object*const)this, "log level %d", this->trace);
 }
 
 C74_HIDDEN void __note__(t_timecode const * const this, void const * const b, long const m, long const a, char * const s) {
@@ -870,19 +855,19 @@ C74_HIDDEN t_max_err const __source__(t_timecode const * const this, t_attr cons
                                             case noErr:
                                                 return MAX_ERR_NONE;
                                             default:
-                                                error("[%s] source clock wasn't updated", class->c_sym->s_name);
+                                                object_error((t_object*const)this, "source clock wasn't updated");
                                                 CFRelease(clock);
                                                 continue;;
                                         }
                                     default:
-                                        error("[%s] no clock created", class->c_sym->s_name);
+                                        object_error((t_object*const)this, "no clock created");
                                         continue;
                                 }
                         }
                     }
             }
         default:
-            error("[%s] choose one from", class->c_sym->s_name);
+            object_error((t_object*const)this, "choose one from");
             for ( register long k = 0, K = size / sizeof(AudioDeviceID) ; k < K ; ++ k ) {
                 {
                     AudioObjectPropertyAddress const address = {
@@ -930,7 +915,7 @@ C74_HIDDEN t_max_err const __source__(t_timecode const * const this, t_attr cons
                         default:
                             continue;
                     }
-                    error(" - %s", name);
+                    object_post((t_object*const)this, " - %s", name);
                 }
             }
             break;
@@ -939,28 +924,20 @@ C74_HIDDEN t_max_err const __source__(t_timecode const * const this, t_attr cons
 }
 
 C74_EXPORT void ext_main(void * const _) {
-    if ( !class ) {
-        
-        class = class_new("timecode", (method const)__new__, (method const)__del__, sizeof(t_timecode), NULL, A_GIMME, 0);
-        
+    if ((class = class_new("timecode", (method const)__new__, (method const)__del__, sizeof(t_timecode), NULL, A_GIMME, 0))) {
         class_addmethod((t_class*const)class, (method const)__bang__, "bang", 0);
         class_addmethod((t_class*const)class, (method const)__info__, "info", A_DEFLONG, 0);
         class_addmethod((t_class*const)class, (method const)__rate__, "rate", A_FLOAT, 0);
         class_addmethod((t_class*const)class, (method const)__time__, "time", A_GIMME, 0);
         class_addmethod((t_class*const)class, (method const)__sync__, "sync", A_GIMME, 0);
         class_addmethod((t_class*const)class, (method const)__note__, "assist", A_CANT, 0);
-        
         class_addattr((t_class*const)class, attribute_new("source", gensym("symbol"), 0, NULL, (method const)__source__));
         class_addattr((t_class*const)class, attribute_new("interval", gensym("float64"), 0, NULL, (method const)__interval__));
         class_addattr((t_class*const)class, attribute_new("threshold", gensym("float64"), 0, NULL, (method const)__threshold__));
-        
         class_register(CLASS_BOX, (t_class*const)class);
         
-    }
-    if ( !queue ) {
         queue = dispatch_queue_create("art.xsgn.timecode", DISPATCH_QUEUE_CONCURRENT);
-    }
-    if ( !prime ) {
+        
         switch (CMTimebaseCreateWithSourceClock(NULL, CMClockGetHostTimeClock(), &prime)) {
             case noErr:
                 switch (CMTimebaseSetRateAndAnchorTime(prime, 1, kCMTimeZero, kCMTimeZero)) {
