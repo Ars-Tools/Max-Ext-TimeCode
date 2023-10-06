@@ -629,9 +629,12 @@ C74_HIDDEN void __import__(t_timecode const * const this, struct sockaddr_in con
 }
 
 C74_HIDDEN void __sync__(t_timecode const * const this, t_symbol const * const symbol, short const argc, t_atom const * const argv) {
-    if ( proxy_getinlet((t_object*const)this))
+    if (proxy_getinlet((t_object*const)this))
         object_error((t_object*const)this, "only primary inlet can accept sync message");
     else switch ( argc ) {
+        case 0:
+            __remove__(this);
+            break;
         case 1:
             __remove__(this);
             __export__(this, (struct sockaddr_in const) {
