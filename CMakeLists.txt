@@ -15,6 +15,7 @@ file(GLOB PROJECT_SRC
      "*.c"
      "*.m"
      "*.cpp"
+     "*.swift"
 )
 add_library( 
 	${PROJECT_NAME} 
