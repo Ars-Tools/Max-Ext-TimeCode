@@ -30,7 +30,7 @@ fileprivate class Core {
     let adjust: CMTimebase
     let object: UnsafeRawPointer
     var status: Status
-    var anchor: CMTime
+    var update: CMTime
     init(object maxobj: UnsafeRawPointer) throws {
         master = try.init(sourceClock: Self.clock)
         adjust = try.init(sourceTimebase: master)
@@ -38,7 +38,7 @@ fileprivate class Core {
         try adjust.setRate(1)
         status = .None
         object = maxobj
-        anchor = adjust.time
+        update = adjust.time
     }
     deinit {
         purge()
@@ -54,7 +54,7 @@ fileprivate class Core {
             listen.cancel()
         }
         status = .None
-        anchor = master.time
+        update = master.time
     }
     var rate: Float64 {
         get {
@@ -82,7 +82,7 @@ fileprivate class Core {
             }
         }
     }
-    func sync(mode: Mode) throws {
+    func sync(mode: Mode) {
         switch mode {
         case.None:
             purge()
@@ -108,7 +108,7 @@ fileprivate class Core {
                     .invalid,
                     .invalid,
                     adjust.time,
-                    anchor
+                    update
                 ] as Array<CMTime>
                 withUnsafeTemporaryAllocation(byteCount: MemoryLayout<sockaddr_in>.size, alignment: MemoryLayout<uintptr_t>.size) {
                     var socklen = socklen_t($0.count)
@@ -146,7 +146,7 @@ fileprivate class Core {
             source.setRegistrationHandler {[weak self]in
                 guard let self else { return }
                 try?master.addTimer(source)
-                try?master.setTimerToFireImmediately(source)
+                try?master.setTimerNextFireTime(source, fireTime: CMTimeAdd(master.time, CMTime(value: 1, timescale: 1)))
             }
             source.setEventHandler {[weak self]in
                 guard let self else { return }
@@ -158,7 +158,7 @@ fileprivate class Core {
                 let sent = withUnsafeBytes(of: target) {
                     sendto(fd, buffer, outgoing, 0, $0.baseAddress?.assumingMemoryBound(to: sockaddr.self), .init(MemoryLayout<sockaddr_in>.size))
                 }
-                try?master.setTimerNextFireTime(source, fireTime: master.time.ceil)
+                try?master.setTimerNextFireTime(source, fireTime: CMTimeAdd(master.time, CMTime(value: 1, timescale: 1)))
                 guard outgoing == sent else { return }
             }
             source.setCancelHandler {[weak self]in
@@ -186,21 +186,18 @@ fileprivate class Core {
                     return recvfrom(fd, &buffer, income, 0, sockref, &socklen)
                 }
                 guard income == recept else { return }
+                let τ = buffer[2]
+                let t = CMTimeMultiplyByRatio(CMTimeAdd(buffer[5], buffer[1]), multiplier: 1, divisor: 2)
+                let Δ = CMTimeSubtract(buffer[5], buffer[1])
                 if server != buffer[3] {
-                    let τ = buffer[2]
-                    let t = CMTimeMultiplyByRatio(CMTimeAdd(buffer[1], buffer[5]), multiplier: 1, divisor: 2)
                     elapse = .positiveInfinity
                     server = buffer[3]
-                    try?adjust.setRateAndAnchorTime(rate: 1, anchorTime: t, referenceTime: τ)
-                } else if CMTimeSubtract(buffer[5], buffer[1]) < elapse {
-                    let τ = buffer[2]
-                    let t = CMTimeMultiplyByRatio(CMTimeAdd(buffer[1], buffer[5]), multiplier: 1, divisor: 2)
-                    elapse = CMTimeSubtract(buffer[5], buffer[1])
+                    try?adjust.setRateAndAnchorTime(rate: 1, anchorTime: τ, referenceTime: t)
+                } else if Δ < elapse {
+                    elapse = Δ
                     anchor = (τ, t)
-                    try?adjust.setRateAndAnchorTime(rate: 1, anchorTime: t, referenceTime: τ)
-                } else if CMTimeSubtract(buffer[5], buffer[1]) < CMTimeAbsoluteValue(CMTimeSubtract(CMTimeMultiplyByRatio(CMTimeAdd(buffer[1], buffer[5]), multiplier: 1, divisor: 2), buffer[2])) {
-                    let τ = buffer[2]
-                    let t = CMTimeMultiplyByRatio(CMTimeAdd(buffer[1], buffer[5]), multiplier: 1, divisor: 2)
+                    try?adjust.setRateAndAnchorTime(rate: 1, anchorTime: τ, referenceTime: t)
+                } else if Δ < CMTimeAbsoluteValue(CMTimeSubtract(τ, t)) {
                     let Δτ = CMTimeSubtract(τ, anchor.0)
                     let Δt = CMTimeSubtract(t, anchor.1)
                     try?adjust.setRateAndAnchorTime(rate: Δτ.seconds / Δt.seconds, anchorTime: τ, referenceTime: t)
@@ -242,13 +239,13 @@ func setTime(object: UnsafeMutableRawPointer, value: Float64) {
 }
 @_cdecl("core_single")
 func`single`(object: UnsafeMutableRawPointer) {
-    try?Unmanaged<Core>.fromOpaque(object).takeUnretainedValue().sync(mode: .None)
+    Unmanaged<Core>.fromOpaque(object).takeUnretainedValue().sync(mode: .None)
 }
 @_cdecl("core_server")
 func`import`(object: UnsafeMutableRawPointer, port: UInt16) {
-    try?Unmanaged<Core>.fromOpaque(object).takeUnretainedValue().sync(mode: .Server(port: port))
+    Unmanaged<Core>.fromOpaque(object).takeUnretainedValue().sync(mode: .Server(port: port))
 }
 @_cdecl("core_client")
 func`export`(object: UnsafeMutableRawPointer, port: UInt16, host: UnsafePointer<CChar>) {
-    try?Unmanaged<Core>.fromOpaque(object).takeUnretainedValue().sync(mode: .Client(port: port, host: .init(cString: host)))
+    Unmanaged<Core>.fromOpaque(object).takeUnretainedValue().sync(mode: .Client(port: port, host: .init(cString: host)))
 }
