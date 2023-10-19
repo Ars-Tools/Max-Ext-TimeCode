@@ -1,7 +1,7 @@
 #include"ext.h"            // standard Max include, always required (except in Jitter)
 #include<CoreMedia/CoreMedia.h>
 
-extern void const*const core_new(void const*const);
+extern void const*const core_new(void const*const, void(*)(void const*const, CMTime), void(*)(void const*const, CMTime, char const*const));
 extern void core_free(void const*const);
 
 extern Float64 const core_getrate(void const*const);
@@ -53,17 +53,40 @@ C74_HIDDEN CMTime const CMTimeMakeWithReal(long double const real) {
 
 typedef struct {
     t_object const super;
-    t_outlet const * const outlet;
     void const * const core;
+    t_outlet const * const outlet[3];
 } t_timecode;
+
+C74_HIDDEN void __bang__(t_timecode const * const this) {
+    CMTime const time = core_gettime(this->core);
+    t_atom list[2] = {0};
+    atom_setlong(list + 0, time.value);
+    atom_setlong(list + 1, time.timescale);
+    outlet_list((t_outlet*const)this->outlet[0], gensym("list"), 2, list);
+}
+
+C74_HIDDEN void __dump__(t_timecode const * const this, CMTime const time) {
+    t_atom list[2] = {0};
+    atom_setlong(list + 0, time.value);
+    atom_setlong(list + 1, time.timescale);
+    outlet_list((t_outlet*const)this->outlet[1], gensym("list"), 2, list);
+}
+
+C74_HIDDEN void __fire__(t_timecode const * const this, CMTime const time, char const * const name) {
+    t_atom list[3] = {0};
+    atom_setsym(list + 0, gensym(name));
+    atom_setlong(list + 1, time.value);
+    atom_setlong(list + 2, time.timescale);
+    outlet_list((t_outlet*const)this->outlet[2], gensym("list"), 3, list);
+}
 
 C74_HIDDEN t_timecode const * const __new__(t_symbol const * const symbol, short const argc, t_atom const * const argv) {
     t_timecode const * const object = object_alloc((t_class*const)class);
     if (object) {
-        t_outlet const * const clock = listout((t_object*const)object);
-//        t_outlet const * const delta = listout((t_object*const)object);
-        *(t_outlet**const)&object->outlet = (t_outlet*const)clock;
-        *(void**const)&object->core = (void*const)core_new(object);
+        *(t_outlet const**const)(object->outlet + 2) = listout((t_object*const)object);
+        *(t_outlet const**const)(object->outlet + 1) = listout((t_object*const)object);
+        *(t_outlet const**const)(object->outlet + 0) = listout((t_object*const)object);
+        *(void**const)&object->core = (void*const)core_new(object, __dump__, __fire__);
     }
     return object;
 }
@@ -71,19 +94,6 @@ C74_HIDDEN t_timecode const * const __new__(t_symbol const * const symbol, short
 C74_HIDDEN void __del__(t_timecode const * const this) {
     if (this->core)
         core_free(this->core);
-}
-
-C74_HIDDEN void __bang__(t_timecode const * const this) {
-    if (this->core) {
-        CMTime const time = core_gettime(this->core);
-        outlet_list((t_outlet*const)this->outlet, gensym("list"), 2, (t_atom const [2]){{
-            .a_type = A_LONG,
-            .a_w = { .w_long = time.value }
-        }, {
-            .a_type = A_LONG,
-            .a_w = { .w_long = time.timescale }
-        }});
-    }
 }
 
 C74_HIDDEN void __rate__(t_timecode const * const this, t_atom_float const rate) {
