@@ -43,6 +43,8 @@ fileprivate class Core {
     deinit {
         purge()
     }
+}
+extension Core {
     private func purge() {
         switch status {
         case .None:
@@ -56,6 +58,8 @@ fileprivate class Core {
         status = .None
         update = master.time
     }
+}
+extension Core {
     var rate: Float64 {
         get {
             adjust.rate
@@ -63,7 +67,7 @@ fileprivate class Core {
         set {
             do {
                 try adjust.setRate(newValue)
-                purge()
+                update = master.time
             } catch {
                 Self.error(object, "set rate error due to \(error)")
             }
@@ -76,12 +80,14 @@ fileprivate class Core {
         set {
             do {
                 try adjust.setTime(newValue)
-                purge()
+                update = master.time
             } catch {
                 Self.error(object, "set rate error due to \(error)")
             }
         }
     }
+}
+extension Core {
     func sync(mode: Mode) {
         switch mode {
         case.None:
@@ -133,10 +139,11 @@ fileprivate class Core {
             purge()
             let fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)
             guard 2 < fd else { return }
-            let s_addr = withUnsafeTemporaryAllocation(of: in_addr_t.self, capacity: 1) {
-                inet_pton(AF_INET, host, $0.baseAddress)
-                return $0[0]
+            var s_addr = in_addr_t()
+            let convert = withUnsafeMutablePointer(to: &s_addr) {
+                inet_pton(AF_INET, host, $0)
             }
+            guard 1 == convert else { return }
             let target = sockaddr_in(sin_len: .init(MemoryLayout<sockaddr_in>.size),
                                      sin_family: .init(AF_INET),
                                      sin_port: .init(bigEndian: port),
