@@ -48,7 +48,7 @@ C74_HIDDEN CMTime const CMTimeMakeWithReal(long double const real) {
     else if ( b > d )
         return CMTimeMake(a + rest * b, b);
     else
-        return CMTimeMake(( ( a + c ) + rest * ( b + d ) ) / 2, ( b + d ) / 2);
+        return CMTimeMake((( a + c ) + rest * ( b + d ) ) / 2, ( b + d ) / 2);
 }
 
 typedef struct {
