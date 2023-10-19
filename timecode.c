@@ -60,7 +60,9 @@ typedef struct {
 C74_HIDDEN t_timecode const * const __new__(t_symbol const * const symbol, short const argc, t_atom const * const argv) {
     t_timecode const * const object = object_alloc((t_class*const)class);
     if (object) {
-        *(t_outlet**const)&object->outlet = listout((t_object*const)object);
+        t_outlet const * const clock = listout((t_object*const)object);
+//        t_outlet const * const delta = listout((t_object*const)object);
+        *(t_outlet**const)&object->outlet = (t_outlet*const)clock;
         *(void**const)&object->core = (void*const)core_new(object);
     }
     return object;
