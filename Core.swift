@@ -29,13 +29,17 @@ fileprivate class Core {
     let master: CMTimebase
     let adjust: CMTimebase
     let object: UnsafeRawPointer
+    let drift: @convention(c) (UnsafeRawPointer, CMTime) -> Void
+    let tempo: @convention(c) (UnsafeRawPointer, CMTime, UnsafePointer<CChar>) -> Void
     var status: Status
     var update: CMTime
-    init(object maxobj: UnsafeRawPointer) throws {
+    init(object maxobj: UnsafeRawPointer, outlet: (@convention(c) (UnsafeRawPointer, CMTime) -> Void, @convention(c)(UnsafeRawPointer, CMTime, UnsafePointer<CChar>) -> Void)) throws {
         master = try.init(sourceClock: Self.clock)
         adjust = try.init(sourceTimebase: master)
         try master.setRate(1)
         try adjust.setRate(1)
+        drift = outlet.0
+        tempo = outlet.1
         status = .None
         object = maxobj
         update = adjust.time
@@ -196,21 +200,26 @@ extension Core {
                     return recvfrom(fd, &buffer, income, 0, sockref, &socklen)
                 }
                 guard income == recept else { return }
-                let τ = buffer[2]
-                let t = CMTimeMultiplyByRatio(CMTimeAdd(buffer[5], buffer[1]), multiplier: 1, divisor: 2)
-                let Δ = CMTimeSubtract(buffer[5], buffer[1])
-                if server != buffer[3] {
+                let peer = buffer[2]
+                let sign = buffer[3]
+                let this = CMTimeMultiplyByRatio(CMTimeAdd(buffer[4], buffer[0]), multiplier: 1, divisor: 2)
+                let host = CMTimeMultiplyByRatio(CMTimeAdd(buffer[5], buffer[1]), multiplier: 1, divisor: 2)
+                let lags = CMTimeSubtract(buffer[5], buffer[1])
+                if sign != server {
                     elapse = .positiveInfinity
-                    server = buffer[3]
-                    try?adjust.setRateAndAnchorTime(rate: 1, anchorTime: τ, referenceTime: t)
-                } else if Δ < elapse {
-                    elapse = Δ
-                    anchor = (τ, t)
-                    try?adjust.setRateAndAnchorTime(rate: 1, anchorTime: τ, referenceTime: t)
-                } else if Δ < CMTimeAbsoluteValue(CMTimeSubtract(τ, t)) {
-                    let Δτ = CMTimeSubtract(τ, anchor.0)
-                    let Δt = CMTimeSubtract(t, anchor.1)
-                    try?adjust.setRateAndAnchorTime(rate: Δτ.seconds / Δt.seconds, anchorTime: τ, referenceTime: t)
+                    server = sign
+                    try?adjust.setRateAndAnchorTime(rate: 1, anchorTime: peer, referenceTime: host)
+                    drift(object, CMTimeSubtract(peer, this))
+                } else if lags < elapse {
+                    elapse = lags
+                    anchor = (peer, host)
+                    try?adjust.setRateAndAnchorTime(rate: 1, anchorTime: peer, referenceTime: host)
+                    drift(object, CMTimeSubtract(peer, this))
+                } else if lags < CMTimeAbsoluteValue(CMTimeMultiplyByRatio(CMTimeSubtract(peer, this), multiplier: 1, divisor: 2)) {
+                    let Δpeer = CMTimeSubtract(peer, anchor.0)
+                    let Δhost = CMTimeSubtract(host, anchor.1)
+                    try?adjust.setRateAndAnchorTime(rate: Δpeer.seconds / Δhost.seconds, anchorTime: peer, referenceTime: host)
+                    drift(object, CMTimeSubtract(peer, this))
                 }
             }
             handle.setCancelHandler {[weak self]in
@@ -224,8 +233,8 @@ extension Core {
     }
 }
 @_cdecl("core_new")
-func new(object: UnsafeRawPointer) -> UnsafeMutableRawPointer? {
-    try?Unmanaged<Core>.passRetained(Core(object: object)).toOpaque()
+func new(object: UnsafeRawPointer, dump: UnsafeRawPointer, fire: UnsafeRawPointer) -> UnsafeMutableRawPointer? {
+    try?Unmanaged<Core>.passRetained(Core(object: object, outlet: (unsafeBitCast(dump, to: (@convention(c)(UnsafeRawPointer, CMTime) -> Void).self), unsafeBitCast(fire, to: (@convention(c)(UnsafeRawPointer, CMTime, UnsafePointer<CChar>) -> Void).self)))).toOpaque()
 }
 @_cdecl("core_free")
 func free(object: UnsafeMutableRawPointer) {
