@@ -140,10 +140,13 @@ extension Core {
             let fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)
             guard 2 < fd else { return }
             var s_addr = in_addr_t()
-            let convert = withUnsafeMutablePointer(to: &s_addr) {
-                inet_pton(AF_INET, host, $0)
+            let success = withUnsafeMutablePointer(to: &s_addr) {
+                inet_pton(AF_INET, host, $0) == 1
             }
-            guard 1 == convert else { return }
+            guard success else {
+                Self.error(object, "Invalid hostname")
+                return
+            }
             let target = sockaddr_in(sin_len: .init(MemoryLayout<sockaddr_in>.size),
                                      sin_family: .init(AF_INET),
                                      sin_port: .init(bigEndian: port),
