@@ -11,6 +11,18 @@ extension CMTime {
         .init(value: value - ( value % .init(timescale) ) + .init(timescale), timescale: timescale)
     }
 }
+extension CMTimebase {
+    static func create(sourceClock: CMClock) throws -> CMTimebase {
+        var result: CMTimebase?
+        CMTimebaseCreateWithSourceClock(allocator: kCFAllocatorDefault, sourceClock: sourceClock, timebaseOut: &result)
+        return result!
+    }
+    static func create(sourceTimebase: CMTimebase) throws -> CMTimebase {
+        var result: CMTimebase?
+        CMTimebaseCreateWithSourceTimebase(allocator: kCFAllocatorDefault, sourceTimebase: sourceTimebase, timebaseOut: &result)
+        return result!
+    }
+}
 fileprivate class Core {
     static let clock: CMClock = .hostTimeClock
     static let queue: DispatchQueue = .init(label: "art.xsgn.timecode", attributes: .concurrent)
@@ -29,22 +41,25 @@ fileprivate class Core {
     let master: CMTimebase
     let adjust: CMTimebase
     let object: UnsafeRawPointer
-    let drift: @convention(c) (UnsafeRawPointer, CMTime) -> Void
-    let tempo: @convention(c) (UnsafeRawPointer, CMTime, UnsafePointer<CChar>) -> Void
+    let tick: @convention(c) (UnsafeRawPointer, UnsafePointer<CChar>, Int64) -> Void
+    let info: @convention(c) (UnsafeRawPointer, CMTime) -> Void
     var status: Status
     var update: CMTime
-    init(object maxobj: UnsafeRawPointer, outlet: (@convention(c) (UnsafeRawPointer, CMTime) -> Void, @convention(c)(UnsafeRawPointer, CMTime, UnsafePointer<CChar>) -> Void)) throws {
-        master = try.init(sourceClock: Self.clock)
-        adjust = try.init(sourceTimebase: master)
+    var timers: Dictionary<String, (CMTime, DispatchSourceTimer)>
+    init(object maxobj: UnsafeRawPointer, outlet: (@convention(c) (UnsafeRawPointer, UnsafePointer<CChar>, Int64) -> Void, @convention(c)(UnsafeRawPointer, CMTime) -> Void)) throws {
+        master = try.create(sourceClock: Self.clock)
+        adjust = try.create(sourceTimebase: master)
         try master.setRate(1)
         try adjust.setRate(1)
-        drift = outlet.0
-        tempo = outlet.1
+        tick = outlet.0
+        info = outlet.1
         status = .None
         object = maxobj
         update = adjust.time
+        timers = [:]
     }
     deinit {
+        removeAll()
         purge()
     }
 }
@@ -83,8 +98,10 @@ extension Core {
         }
         set {
             do {
+                info(object, CMTimeSubtract(newValue, adjust.time))
                 try adjust.setTime(newValue)
                 update = master.time
+                scheduleAll(from: newValue)
             } catch {
                 Self.error(object, "set rate error due to \(error)")
             }
@@ -136,7 +153,7 @@ extension Core {
             handle.setCancelHandler {[weak self]in
                 close(fd)
             }
-            handle.resume()
+            handle.activate()
             status = .Server(listen: handle)
             break
         case.Client(let port, let host):
@@ -209,32 +226,85 @@ extension Core {
                     elapse = .positiveInfinity
                     server = sign
                     try?adjust.setRateAndAnchorTime(rate: 1, anchorTime: peer, referenceTime: host)
-                    drift(object, CMTimeSubtract(peer, this))
+                    scheduleAll(from: peer)
+                    info(object, CMTimeSubtract(peer, this))
                 } else if lags < elapse {
                     elapse = lags
                     anchor = (peer, host)
                     try?adjust.setRateAndAnchorTime(rate: 1, anchorTime: peer, referenceTime: host)
-                    drift(object, CMTimeSubtract(peer, this))
+                    scheduleAll(from: peer)
+                    info(object, CMTimeSubtract(peer, this))
                 } else if lags < CMTimeAbsoluteValue(CMTimeMultiplyByRatio(CMTimeSubtract(peer, this), multiplier: 1, divisor: 2)) {
                     let Δpeer = CMTimeSubtract(peer, anchor.0)
                     let Δhost = CMTimeSubtract(host, anchor.1)
                     try?adjust.setRateAndAnchorTime(rate: Δpeer.seconds / Δhost.seconds, anchorTime: peer, referenceTime: host)
-                    drift(object, CMTimeSubtract(peer, this))
+                    scheduleAll(from: peer)
+                    info(object, CMTimeSubtract(peer, this))
                 }
             }
             handle.setCancelHandler {[weak self]in
                 close(fd)
             }
-            handle.resume()
-            source.resume()
+            handle.activate()
+            source.activate()
             status = .Client(listen: handle, source: source)
             break
         }
     }
 }
+extension Core {
+    @inline(__always)
+    private func countAndNext(time: CMTime, interval: CMTime) -> (CMTimeValue, CMTime) {
+        let count = CMTimeValue(adjust.time.seconds/interval.seconds)
+        return (count, CMTime(value: (count + 1) * interval.value, timescale: interval.timescale))
+    }
+    private func scheduleAll(from now: CMTime) {
+        for (interval, timer) in timers.values {
+            try?adjust.setTimerNextFireTime(timer, fireTime: countAndNext(time: now, interval: interval).1)
+        }
+    }
+    private func removeAll() {
+        for key in timers.keys {
+            timers.removeValue(forKey: key)?.1.cancel()
+        }
+    }
+    func tick(label: String, interval: CMTime) {
+        timers.removeValue(forKey: label)?.1.cancel()
+        if interval.isValid, interval.isNumeric, .zero < interval {
+            let timer = DispatchSource.makeTimerSource(flags: .strict, queue: Self.queue)
+            timer.setRegistrationHandler {[weak self]in
+                guard let self else { return }
+                try?adjust.addTimer(timer)
+                try?adjust.setTimerToFireImmediately(timer)
+            }
+            timer.setEventHandler {[weak self]in
+                guard let self else { return }
+                let (count, next) = countAndNext(time: adjust.time, interval: interval)
+                tick(object, label, count)
+                try?adjust.setTimerNextFireTime(timer, fireTime: next)
+            }
+            timer.setCancelHandler {[weak self]in
+                guard let self else { return }
+                try?adjust.removeTimer(timer)
+            }
+            timer.activate()
+            timers.updateValue((interval, timer), forKey: label)?.1.cancel()
+        } else {
+            timers.removeValue(forKey: label)?.1.cancel()
+        }
+    }
+}
+extension Core {
+	static var version: String {
+		Bundle(for: self).object(forInfoDictionaryKey: "CFBundleVersion")as?String ?? ""
+	}
+}
 @_cdecl("core_new")
-func new(object: UnsafeRawPointer, dump: UnsafeRawPointer, fire: UnsafeRawPointer) -> UnsafeMutableRawPointer? {
-    try?Unmanaged<Core>.passRetained(Core(object: object, outlet: (unsafeBitCast(dump, to: (@convention(c)(UnsafeRawPointer, CMTime) -> Void).self), unsafeBitCast(fire, to: (@convention(c)(UnsafeRawPointer, CMTime, UnsafePointer<CChar>) -> Void).self)))).toOpaque()
+func new(object: UnsafeRawPointer, tick: UnsafeRawPointer, info: UnsafeRawPointer) -> UnsafeMutableRawPointer? {
+    try?Unmanaged<Core>.passRetained(Core(object: object, outlet: (
+        unsafeBitCast(tick, to: (@convention(c)(UnsafeRawPointer, UnsafePointer<CChar>, Int64) -> Void).self),
+        unsafeBitCast(info, to: (@convention(c)(UnsafeRawPointer, CMTime) -> Void).self)
+    ))).toOpaque()
 }
 @_cdecl("core_free")
 func free(object: UnsafeMutableRawPointer) {
@@ -267,4 +337,16 @@ func`import`(object: UnsafeMutableRawPointer, port: UInt16) {
 @_cdecl("core_client")
 func`export`(object: UnsafeMutableRawPointer, port: UInt16, host: UnsafePointer<CChar>) {
     Unmanaged<Core>.fromOpaque(object).takeUnretainedValue().sync(mode: .Client(port: port, host: .init(cString: host)))
+}
+@_cdecl("core_tick")
+func tick(object: UnsafeMutableRawPointer, label: UnsafePointer<CChar>, interval: CMTime) {
+    Unmanaged<Core>.fromOpaque(object).takeUnretainedValue().tick(label: .init(cString: label), interval: interval)
+}
+@_cdecl("core_version_length")
+func version() -> size_t {
+	Core.version.count + 1
+}
+@_cdecl("core_version_string")
+func version(target: UnsafeMutablePointer<Int8>) {
+	target.initialize(from: Core.version, count: Core.version.count + 1)
 }
