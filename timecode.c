@@ -13,12 +13,17 @@ extern void core_settime(void const*const, CMTime const);
 extern void core_single(void const * const);
 extern void core_server(void const * const, uint16_t const);
 extern void core_client(void const * const, uint16_t const, int8_t const * const);
+extern void core_version_string(char * const string);
+extern size_t core_version_length();
+
+extern void core_tick(void const*const, int8_t const*const, CMTime const);
 
 C74_HIDDEN static t_class const * class = NULL;
 
 C74_HIDDEN CMTime const CMTimeMakeWithReal(long double const real) {
     __int128_t const N = 1ULL << DBL_MANT_DIG;
     long double rest, frac = modfl(real, &rest);
+    long double eps = fabsl(real) * FLT_EPSILON;
     if ( !frac ) {
         return CMTimeMake(rest, 1);
     } else if ( frac < 0 ) {
@@ -31,7 +36,7 @@ C74_HIDDEN CMTime const CMTimeMakeWithReal(long double const real) {
     __int128_t c = 1, d = 0;
     while ( ( b <= N ) && ( d <= N ) ) {
         long double const e = fmal(frac, (b+d), -(a+c));
-        if ( fabsl( e ) < FLT_EPSILON ) {
+        if ( fabsl( e ) < eps ) {
             break;
         } else if ( e > 0 ) {
             a += c;
@@ -65,28 +70,27 @@ C74_HIDDEN void __bang__(t_timecode const * const this) {
     outlet_list((t_outlet*const)this->outlet[0], gensym("list"), 2, list);
 }
 
-C74_HIDDEN void __dump__(t_timecode const * const this, CMTime const time) {
+C74_HIDDEN void __fire__(t_timecode const * const this, char const * const name, uint64_t const ramp) {
     t_atom list[2] = {0};
-    atom_setlong(list + 0, time.value);
-    atom_setlong(list + 1, time.timescale);
+    atom_setsym(list + 0, gensym(name));
+    atom_setlong(list + 1, ramp);
     outlet_list((t_outlet*const)this->outlet[1], gensym("list"), 2, list);
 }
 
-C74_HIDDEN void __fire__(t_timecode const * const this, CMTime const time, char const * const name) {
-    t_atom list[3] = {0};
-    atom_setsym(list + 0, gensym(name));
-    atom_setlong(list + 1, time.value);
-    atom_setlong(list + 2, time.timescale);
-    outlet_list((t_outlet*const)this->outlet[2], gensym("list"), 3, list);
+C74_HIDDEN void __info__(t_timecode const * const this, CMTime const time) {
+    t_atom list[2] = {0};
+    atom_setlong(list + 0, time.value);
+    atom_setlong(list + 1, time.timescale);
+    outlet_list((t_outlet*const)this->outlet[2], gensym("list"), 2, list);
 }
 
-C74_HIDDEN t_timecode const * const __new__(t_symbol const * const symbol, short const argc, t_atom const * const argv) {
+C74_HIDDEN t_timecode const * const __new__(t_symbol const * const symbol, ushort const argc, t_atom const * const argv) {
     t_timecode const * const object = object_alloc((t_class*const)class);
     if (object) {
         *(t_outlet const**const)(object->outlet + 2) = listout((t_object*const)object);
         *(t_outlet const**const)(object->outlet + 1) = listout((t_object*const)object);
         *(t_outlet const**const)(object->outlet + 0) = listout((t_object*const)object);
-        *(void**const)&object->core = (void*const)core_new(object, __dump__, __fire__);
+        *(void**const)&object->core = core_new(object, __fire__, __info__);
     }
     return object;
 }
@@ -101,7 +105,7 @@ C74_HIDDEN void __rate__(t_timecode const * const this, t_atom_float const rate)
         core_setrate(this->core, rate);
 }
 
-C74_HIDDEN void __time__(t_timecode const * const this, t_symbol const*const symbol, short const argc, t_atom const*const argv) {
+C74_HIDDEN void __time__(t_timecode const * const this, t_symbol const*const symbol, ushort const argc, t_atom const*const argv) {
     if (this->core) switch (argc) {
         case 0:
             break;
@@ -130,7 +134,7 @@ C74_HIDDEN void __time__(t_timecode const * const this, t_symbol const*const sym
     }
 }
 
-C74_HIDDEN void __sync__(t_timecode const * const this, t_symbol const*const symbol, short const argc, t_atom const * const argv) {
+C74_HIDDEN void __sync__(t_timecode const * const this, t_symbol const*const symbol, ushort const argc, t_atom const * const argv) {
     if (this->core) switch (argc) {
         case 0:
             core_single(this->core);
@@ -153,12 +157,61 @@ C74_HIDDEN void __sync__(t_timecode const * const this, t_symbol const*const sym
     }
 }
 
+C74_HIDDEN void __tick__(t_timecode const * const this, t_symbol const * const symbol, ushort const argc, t_atom const * const argv) {
+    if (this->core) switch (argc) {
+        case 1:
+            if (atom_gettype(argv + 0) != A_SYM)
+                object_error(this, "first argument should be symbol");
+            else
+                core_tick(this->core, atom_getsym(argv + 0)->s_name, kCMTimeZero);
+            break;
+        case 2:
+            if (atom_gettype(argv + 0) != A_SYM)
+                object_error(this, "first argument should be symbol");
+            else if (atom_gettype(argv + 1) == A_FLOAT)
+                core_tick(this->core, atom_getsym(argv + 0)->s_name, CMTimeMakeWithReal(atom_getfloat(argv + 1)));
+            else if (atom_gettype(argv + 1) == A_LONG)
+                core_tick(this->core, atom_getsym(argv + 0)->s_name, CMTimeMake(atom_getlong(argv + 1), 1));
+            else if (atom_gettype(argv + 1) == A_SYM) {
+                CMTimeValue value = 0;
+                CMTimeScale scale = 1;
+                switch (sscanf(atom_getsym(argv + 1)->s_name, "%lld/%u", &value, &scale)) {
+                case 2:
+                    core_tick(this->core, atom_getsym(argv + 0)->s_name, CMTimeMake(value, scale));
+                    break;
+                default:
+                    object_error(this, "rational format should be [integer]/[integer]");
+                    break;
+                }
+            }
+            else
+                object_error(this, "invalid message");
+            break;
+        case 3:
+            if (atom_gettype(argv + 0) != A_SYM)
+                object_error(this, "first argument should be symbol");
+            else if (atom_gettype(argv + 1) != A_LONG)
+                object_error(this, "second argument should be integer");
+            else if (atom_gettype(argv + 2) != A_LONG)
+                object_error(this, "third argument should be integer");
+            else
+                core_tick(this->core, atom_getsym(argv + 0)->s_name, CMTimeMake(atom_getlong(argv + 1), atom_getlong(argv + 2)));
+            break;
+        default:
+            object_error(this, "invalid message");
+    }
+}
+
 C74_EXPORT void ext_main(void * const _) {
     if ((class = class_new("timecode", (method const)__new__, (method const)__del__, sizeof(t_timecode), NULL, 0))) {
+		char * const string = (char * const)alloca(core_version_length() + 1);
+		core_version_string(string);
+		post("timecode version %s", string);
         class_addmethod((t_class*const)class, (method const)__bang__, "bang", 0);
         class_addmethod((t_class*const)class, (method const)__rate__, "rate", A_FLOAT, 0);
         class_addmethod((t_class*const)class, (method const)__time__, "time", A_GIMME, 0);
         class_addmethod((t_class*const)class, (method const)__sync__, "sync", A_GIMME, 0);
+        class_addmethod((t_class*const)class, (method const)__tick__, "tick", A_GIMME, 0);
         class_register(CLASS_BOX, (t_class*const)class);
     }
 }
