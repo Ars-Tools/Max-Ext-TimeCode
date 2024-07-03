@@ -23,6 +23,49 @@ extension CMTimebase {
         return result!
     }
 }
+/*
+extension CMClock {
+	static let hostTimeClock = CMClockGetHostTimeClock()
+}
+extension DispatchSourceTimer {
+	var core: dispatch_source_t {
+		self as!dispatch_source_t
+	}
+}
+extension CMTimebase {
+	func setRate(_ rate: Float64) throws {
+		CMTimebaseSetRate(self, rate: rate)
+	}
+	func setTime(_ time: CMTime) throws {
+		CMTimebaseSetTime(self, time: time)
+	}
+	func setRateAndAnchorTime(rate: Float64, anchorTime: CMTime, referenceTime: CMTime) throws {
+		CMTimebaseSetRateAndAnchorTime(self, rate: rate, anchorTime: anchorTime, immediateSourceTime: referenceTime)
+	}
+	var rate: Float64 {
+		CMTimebaseGetRate(self)
+	}
+	var time: CMTime {
+		CMTimebaseGetTime(self)
+	}
+	func addTimer(_ timerSource: DispatchSourceTimer) throws {
+		CMTimebaseAddTimerDispatchSource(self, timerSource: timerSource.core)
+	}
+	@discardableResult
+	func removeTimer(_ timerSource: DispatchSourceTimer) throws -> OSStatus {
+		CMTimebaseRemoveTimerDispatchSource(self, timerSource: timerSource.core)
+	}
+	@discardableResult
+	func setTimerToFireImmediately(_ timerSource: DispatchSourceTimer) throws -> OSStatus {
+		CMTimebaseSetTimerDispatchSourceToFireImmediately(self, timerSource: timerSource.core)
+	}
+	@discardableResult
+	func setTimerNextFireTime(_ timerSource: DispatchSourceTimer, fireTime: CMTime) throws -> OSStatus {
+		CMTimebaseSetTimerDispatchSourceNextFireTime(self, timerSource: timerSource.core, fireTime: fireTime, flags: 0)
+	}
+}
+*/
+
 fileprivate class Core {
     static let clock: CMClock = .hostTimeClock
     static let queue: DispatchQueue = .init(label: "art.xsgn.timecode", attributes: .concurrent)
@@ -98,7 +141,6 @@ extension Core {
         }
         set {
             do {
-                info(object, CMTimeSubtract(newValue, adjust.time))
                 try adjust.setTime(newValue)
                 update = master.time
                 scheduleAll(from: newValue)
@@ -222,24 +264,24 @@ extension Core {
                 let this = CMTimeMultiplyByRatio(CMTimeAdd(buffer[4], buffer[0]), multiplier: 1, divisor: 2)
                 let host = CMTimeMultiplyByRatio(CMTimeAdd(buffer[5], buffer[1]), multiplier: 1, divisor: 2)
                 let lags = CMTimeSubtract(buffer[5], buffer[1])
+				defer {
+					info(object, CMTimeSubtract(peer, this))
+				}
                 if sign != server {
                     elapse = .positiveInfinity
                     server = sign
                     try?adjust.setRateAndAnchorTime(rate: 1, anchorTime: peer, referenceTime: host)
                     scheduleAll(from: peer)
-                    info(object, CMTimeSubtract(peer, this))
                 } else if lags < elapse {
                     elapse = lags
                     anchor = (peer, host)
                     try?adjust.setRateAndAnchorTime(rate: 1, anchorTime: peer, referenceTime: host)
                     scheduleAll(from: peer)
-                    info(object, CMTimeSubtract(peer, this))
                 } else if lags < CMTimeAbsoluteValue(CMTimeMultiplyByRatio(CMTimeSubtract(peer, this), multiplier: 1, divisor: 2)) {
                     let Δpeer = CMTimeSubtract(peer, anchor.0)
                     let Δhost = CMTimeSubtract(host, anchor.1)
                     try?adjust.setRateAndAnchorTime(rate: Δpeer.seconds / Δhost.seconds, anchorTime: peer, referenceTime: host)
                     scheduleAll(from: peer)
-                    info(object, CMTimeSubtract(peer, this))
                 }
             }
             handle.setCancelHandler {[weak self]in
