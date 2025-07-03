@@ -68,7 +68,7 @@ extension CMTimebase {
 
 fileprivate class Core {
 	static let clock: CMClock = .hostTimeClock
-	static let queue: DispatchQueue = .init(label: "art.xsgn.timecode", attributes: .concurrent)
+	static let queue: DispatchQueue = .init(label: "ars.tools.timecode", attributes: .concurrent)
 	static let print = unsafeBitCast(dlsym(dlopen(.none, RTLD_LAZY), "object_post"), to: (@convention(c)(UnsafeRawPointer, UnsafePointer<CChar>) -> Void).self)
 	static let error = unsafeBitCast(dlsym(dlopen(.none, RTLD_LAZY), "object_error"), to: (@convention(c)(UnsafeRawPointer, UnsafePointer<CChar>) -> Void).self)
 	enum Mode {
@@ -197,7 +197,6 @@ extension Core {
 			}
 			handle.activate()
 			status = .Server(listen: handle)
-			break
 		case.Client(let port, let host):
 			purge()
 			let fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)
