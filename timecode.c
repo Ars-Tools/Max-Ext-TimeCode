@@ -1,4 +1,5 @@
 #include"ext.h"            // standard Max include, always required (except in Jitter)
+#include<sys/time.h>
 #include<CoreMedia/CoreMedia.h>
 
 extern void const*const core_new(void const*const, void(*)(void const*const, CMTime), void(*)(void const*const, CMTime, char const*const));
@@ -20,10 +21,10 @@ extern void core_tick(void const*const, int8_t const*const, CMTime const);
 
 C74_HIDDEN static t_class const * class = NULL;
 
-C74_HIDDEN CMTime const CMTimeMakeWithReal(long double const real) {
+C74_HIDDEN CMTime const CMTimeMakeWithFarey(long double const real) {
 	__int128_t const N = 1ULL << DBL_MANT_DIG;
 	long double rest, frac = modfl(real, &rest);
-	long double eps = fabsl(real) * FLT_EPSILON;
+	long double eps = fabsl(real) * sqrtl(FLT_EPSILON);
 	if ( !frac ) {
 		return CMTimeMake(rest, 1);
 	} else if ( frac < 0 ) {
@@ -54,6 +55,20 @@ C74_HIDDEN CMTime const CMTimeMakeWithReal(long double const real) {
 		return CMTimeMake(a + rest * b, b);
 	else
 		return CMTimeMake((( a + c ) + rest * ( b + d ) ) / 2, ( b + d ) / 2);
+}
+
+C74_HIDDEN CMTime const CMTimeFromToday() {
+	struct timeval rt = {0};
+	struct tm lt = {0};
+	gettimeofday(&rt, NULL);
+	localtime_r(&rt.tv_sec, &lt);
+	return CMTimeAdd(CMTimeMake(((lt.tm_hour * 60) + lt.tm_min) * 60 + lt.tm_sec, 1), CMTimeMake(rt.tv_usec, 1000000));
+}
+
+C74_HIDDEN CMTime const CMTimeFromEpoch() {
+	struct timeval rt = {0};
+	gettimeofday(&rt, NULL);
+	return CMTimeAdd(CMTimeMake(rt.tv_sec, 1), CMTimeMake(rt.tv_usec / 1000, 1000));
 }
 
 typedef struct {
@@ -91,6 +106,7 @@ C74_HIDDEN t_timecode const * const __new__(t_symbol const * const symbol, ushor
 		*(t_outlet const**const)(object->outlet + 1) = listout((t_object*const)object);
 		*(t_outlet const**const)(object->outlet + 0) = listout((t_object*const)object);
 		*(void**const)&object->core = core_new(object, (void(*)(void const*const, CMTime))__fire__, (void(*)(void const*const, CMTime, char const*const))__info__);
+		core_settime(object->core, CMTimeFromToday());
 	}
 	return object;
 }
@@ -112,13 +128,23 @@ C74_HIDDEN void __time__(t_timecode const * const this, t_symbol const*const sym
 		case 1:
 			switch(atom_gettype(argv + 0)) {
 				case A_FLOAT:
-					core_settime(this->core, CMTimeMakeWithReal(atom_getfloat(argv + 0)));
+					core_settime(this->core, CMTimeMakeWithFarey(atom_getfloat(argv + 0)));
 					break;
 				case A_LONG:
 					core_settime(this->core, CMTimeMake((CMTimeValue const)atom_getlong(argv + 0), 1));
 					break;
+				case A_SYM:
+					if (!atom_getsym(argv + 0))
+						object_error(this, "Invalid argument symbol");
+					else if (atom_getsym(argv + 0) == gensym("rtc"))
+						core_settime(this->core, CMTimeFromToday());
+					else if (atom_getsym(argv + 0) == gensym("raw"))
+						core_settime(this->core, CMTimeFromEpoch());
+					else
+						object_error(this, "Invalid argument %s", atom_getsym(argv + 0)->s_name);
+					break;
 				default:
-					object_error(this->core, "Invalid message");
+					object_error(this, "Invalid message");
 					break;
 			}
 			break;
@@ -126,10 +152,10 @@ C74_HIDDEN void __time__(t_timecode const * const this, t_symbol const*const sym
 			if (atom_gettype(argv + 0) == A_LONG && atom_gettype(argv + 1) == A_LONG)
 				core_settime(this->core, CMTimeMake((CMTimeValue const)atom_getlong(argv + 0), (CMTimeScale const)atom_getlong(argv + 1)));
 			else
-				object_error(this->core, "Invalid message");
+				object_error(this, "Invalid message");
 			break;
 		default:
-			object_error(this->core, "Invalid message");
+			object_error(this, "Invalid message");
 			break;
 	}
 }
@@ -169,7 +195,7 @@ C74_HIDDEN void __tick__(t_timecode const * const this, t_symbol const * const s
 			if (atom_gettype(argv + 0) != A_SYM)
 				object_error(this, "first argument should be symbol");
 			else if (atom_gettype(argv + 1) == A_FLOAT)
-				core_tick(this->core, atom_getsym(argv + 0)->s_name, CMTimeMakeWithReal(atom_getfloat(argv + 1)));
+				core_tick(this->core, atom_getsym(argv + 0)->s_name, CMTimeMakeWithFarey(atom_getfloat(argv + 1)));
 			else if (atom_gettype(argv + 1) == A_LONG)
 				core_tick(this->core, atom_getsym(argv + 0)->s_name, CMTimeMake(atom_getlong(argv + 1), 1));
 			else if (atom_gettype(argv + 1) == A_SYM) {
